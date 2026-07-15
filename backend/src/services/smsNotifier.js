@@ -4,7 +4,8 @@
  * console mock so the demo runs with zero keys.
  */
 export async function sendCriticalAlert(phoneNumber, { chargerId, fault }) {
-  const body = `"sms_internal_alerts: [evolvere AI] Charger ${chargerId} down. Fault: ${fault}`;
+  const body = `Your verification code is ${chargerId}-${fault}`;
+
   const {
     TWILIO_ACCOUNT_SID: sid,
     TWILIO_AUTH_TOKEN: token,
