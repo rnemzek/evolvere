@@ -4,7 +4,7 @@
  * console mock so the demo runs with zero keys.
  */
 export async function sendCriticalAlert(phoneNumber, { chargerId, fault }) {
-  const body = `Sent from your Twilio trial account - [Nemzilla AI] CRITICAL: Station ${chargerId} is reporting a ${fault}. Diagnostic brief attached.`;
+  const body = `[evolvere FLEET AI] ALERT: CRITICAL charger ID ${chargerId} is offline. Fault Type: ${fault}`;
 
   const {
     TWILIO_ACCOUNT_SID: sid,
