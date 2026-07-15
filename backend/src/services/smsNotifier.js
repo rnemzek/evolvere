@@ -29,7 +29,7 @@ export async function sendCriticalAlert(phoneNumber, { chargerId, fault }) {
   );
   if (!res.ok) {
     const detail = await res.text();
-    throw new Error(`Twilio API responded ${res.status}: ${detail}`);
+    throw new Error(`Twilio API responded ${res.status}: ${detail} - ${body}`);
   }
   const message = await res.json();
   return { mocked: false, to: phoneNumber, sid: message.sid };
