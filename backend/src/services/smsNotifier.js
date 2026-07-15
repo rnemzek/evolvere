@@ -4,7 +4,7 @@
  * console mock so the demo runs with zero keys.
  */
 export async function sendCriticalAlert(phoneNumber, { chargerId, fault }) {
-  const body = `[Nemzilla AI] CRITICAL: Station ${chargerId} is reporting a ${fault}. Diagnostic brief attached.`;
+  const body = `Your Twilio code is: [Nemzilla AI] CRITICAL: Station ${chargerId} is reporting a ${fault}. Diagnostic brief attached.`;
   const {
     TWILIO_ACCOUNT_SID: sid,
     TWILIO_AUTH_TOKEN: token,
