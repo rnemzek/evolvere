@@ -1,0 +1,138 @@
+{
+  "generatedAt": "2026-07-14T17:00:00Z",
+  "intervalSeconds": 30,
+  "meterValues": [
+    {
+      "timestamp": "2026-07-14T16:58:00Z",
+      "transactionId": "TXN-20260714-0005",
+      "metrics": {
+        "currentAmperage": 156.2,
+        "voltage": 398.5,
+        "currentKW": 62.2,
+        "socPercent": 41,
+        "temperatureCelsius": 34.8
+      }
+    },
+    {
+      "timestamp": "2026-07-14T16:58:30Z",
+      "transactionId": "TXN-20260714-0005",
+      "metrics": {
+        "currentAmperage": 156.5,
+        "voltage": 399.1,
+        "currentKW": 62.5,
+        "socPercent": 42,
+        "temperatureCelsius": 35.1
+      }
+    },
+    {
+      "timestamp": "2026-07-14T16:59:00Z",
+      "transactionId": "TXN-20260714-0005",
+      "metrics": {
+        "currentAmperage": 155.8,
+        "voltage": 400.3,
+        "currentKW": 62.4,
+        "socPercent": 42,
+        "temperatureCelsius": 35.4
+      }
+    },
+    {
+      "timestamp": "2026-07-14T16:58:00Z",
+      "transactionId": "TXN-20260714-0006",
+      "metrics": {
+        "currentAmperage": 30.1,
+        "voltage": 239.4,
+        "currentKW": 7.2,
+        "socPercent": 68,
+        "temperatureCelsius": 31.2
+      }
+    },
+    {
+      "timestamp": "2026-07-14T16:58:30Z",
+      "transactionId": "TXN-20260714-0006",
+      "metrics": {
+        "currentAmperage": 30.0,
+        "voltage": 240.1,
+        "currentKW": 7.2,
+        "socPercent": 68,
+        "temperatureCelsius": 31.3
+      }
+    },
+    {
+      "timestamp": "2026-07-14T16:59:00Z",
+      "transactionId": "TXN-20260714-0006",
+      "metrics": {
+        "currentAmperage": 29.9,
+        "voltage": 240.0,
+        "currentKW": 7.2,
+        "socPercent": 69,
+        "temperatureCelsius": 31.3
+      }
+    },
+    {
+      "timestamp": "2026-07-14T16:58:00Z",
+      "transactionId": "TXN-20260714-0007",
+      "metrics": {
+        "currentAmperage": 287.4,
+        "voltage": 412.6,
+        "currentKW": 118.6,
+        "socPercent": 23,
+        "temperatureCelsius": 41.7
+      }
+    },
+    {
+      "timestamp": "2026-07-14T16:58:30Z",
+      "transactionId": "TXN-20260714-0007",
+      "metrics": {
+        "currentAmperage": 286.1,
+        "voltage": 413.0,
+        "currentKW": 118.2,
+        "socPercent": 24,
+        "temperatureCelsius": 42.3
+      }
+    },
+    {
+      "timestamp": "2026-07-14T16:59:00Z",
+      "transactionId": "TXN-20260714-0007",
+      "metrics": {
+        "currentAmperage": 284.9,
+        "voltage": 413.4,
+        "currentKW": 117.8,
+        "socPercent": 24,
+        "temperatureCelsius": 42.9
+      }
+    },
+    {
+      "timestamp": "2026-07-14T16:58:00Z",
+      "transactionId": "TXN-20260714-0008",
+      "metrics": {
+        "currentAmperage": 4.8,
+        "voltage": 238.9,
+        "currentKW": 1.1,
+        "socPercent": 97,
+        "temperatureCelsius": 29.6
+      }
+    },
+    {
+      "timestamp": "2026-07-14T16:58:30Z",
+      "transactionId": "TXN-20260714-0008",
+      "metrics": {
+        "currentAmperage": 4.6,
+        "voltage": 239.2,
+        "currentKW": 1.1,
+        "socPercent": 98,
+        "temperatureCelsius": 29.5
+      }
+    },
+    {
+      "timestamp": "2026-07-14T16:59:00Z",
+      "transactionId": "TXN-20260714-0008",
+      "metrics": {
+        "currentAmperage": 4.4,
+        "voltage": 239.0,
+        "currentKW": 1.0,
+        "socPercent": 98,
+        "temperatureCelsius": 29.4
+      }
+    }
+  ]
+}

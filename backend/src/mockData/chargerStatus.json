@@ -1,0 +1,115 @@
+{
+  "generatedAt": "2026-07-14T17:00:00Z",
+  "platform": "ēvolvere FLEET",
+  "stations": [
+    {
+      "chargerId": "EVR-FLEET-0001",
+      "siteName": "Tustin HQ — Front Lot",
+      "location": { "latitude": 33.7458, "longitude": -117.8265 },
+      "firmwareVersion": "3.4.1",
+      "ocppVersion": "1.6J",
+      "connectors": [
+        {
+          "connectorId": 1,
+          "type": "CCS1",
+          "status": "Charging",
+          "currentPowerKW": 62.4
+        },
+        {
+          "connectorId": 2,
+          "type": "CHAdeMO",
+          "status": "Available",
+          "currentPowerKW": 0.0
+        }
+      ]
+    },
+    {
+      "chargerId": "EVR-FLEET-0002",
+      "siteName": "Tustin HQ — Solar Canopy",
+      "location": { "latitude": 33.7461, "longitude": -117.8271 },
+      "firmwareVersion": "3.4.1",
+      "ocppVersion": "1.6J",
+      "connectors": [
+        {
+          "connectorId": 1,
+          "type": "CCS1",
+          "status": "Preparing",
+          "currentPowerKW": 0.0
+        },
+        {
+          "connectorId": 2,
+          "type": "J1772",
+          "status": "Charging",
+          "currentPowerKW": 7.2
+        }
+      ]
+    },
+    {
+      "chargerId": "EVR-FLEET-0003",
+      "siteName": "The District at Tustin Legacy",
+      "location": { "latitude": 33.7093, "longitude": -117.8365 },
+      "firmwareVersion": "3.3.7",
+      "ocppVersion": "1.6J",
+      "connectors": [
+        {
+          "connectorId": 1,
+          "type": "CCS1",
+          "status": "Faulted",
+          "currentPowerKW": 0.0,
+          "lastErrorCode": "GroundFailure",
+          "lastErrorTimestamp": "2026-07-14T14:32:18Z"
+        },
+        {
+          "connectorId": 2,
+          "type": "CHAdeMO",
+          "status": "Faulted",
+          "currentPowerKW": 0.0,
+          "lastErrorCode": "Power_Loss",
+          "lastErrorTimestamp": "2026-07-14T14:32:18Z"
+        }
+      ]
+    },
+    {
+      "chargerId": "EVR-FLEET-0004",
+      "siteName": "Irvine Spectrum — North Garage",
+      "location": { "latitude": 33.6513, "longitude": -117.7443 },
+      "firmwareVersion": "4.0.2",
+      "ocppVersion": "2.0.1",
+      "connectors": [
+        {
+          "connectorId": 1,
+          "type": "CCS1",
+          "status": "SuspendedEVSE",
+          "currentPowerKW": 0.0
+        },
+        {
+          "connectorId": 2,
+          "type": "CCS1",
+          "status": "Charging",
+          "currentPowerKW": 118.6
+        }
+      ]
+    },
+    {
+      "chargerId": "EVR-FLEET-0005",
+      "siteName": "Santa Ana Civic Center",
+      "location": { "latitude": 33.7495, "longitude": -117.8677 },
+      "firmwareVersion": "4.0.2",
+      "ocppVersion": "2.0.1",
+      "connectors": [
+        {
+          "connectorId": 1,
+          "type": "J1772",
+          "status": "Finishing",
+          "currentPowerKW": 1.1
+        },
+        {
+          "connectorId": 2,
+          "type": "CCS1",
+          "status": "Available",
+          "currentPowerKW": 0.0
+        }
+      ]
+    }
+  ]
+}

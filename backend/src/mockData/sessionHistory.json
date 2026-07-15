@@ -1,0 +1,93 @@
+{
+  "generatedAt": "2026-07-14T17:00:00Z",
+  "transactions": [
+    {
+      "transactionId": "TXN-20260713-0001",
+      "chargerId": "EVR-FLEET-0001",
+      "connectorId": 1,
+      "startTime": "2026-07-13T08:12:44Z",
+      "endTime": "2026-07-13T08:58:03Z",
+      "meterStartKwh": 48210.4,
+      "meterStopKwh": 48252.9,
+      "totalEnergyDeliveredKwh": 42.5,
+      "terminationReason": "Local"
+    },
+    {
+      "transactionId": "TXN-20260713-0002",
+      "chargerId": "EVR-FLEET-0002",
+      "connectorId": 2,
+      "startTime": "2026-07-13T09:05:10Z",
+      "endTime": "2026-07-13T13:41:27Z",
+      "meterStartKwh": 12904.1,
+      "meterStopKwh": 12936.3,
+      "totalEnergyDeliveredKwh": 32.2,
+      "terminationReason": "EVDisconnected"
+    },
+    {
+      "transactionId": "TXN-20260713-0003",
+      "chargerId": "EVR-FLEET-0004",
+      "connectorId": 2,
+      "startTime": "2026-07-13T11:22:51Z",
+      "endTime": "2026-07-13T11:49:16Z",
+      "meterStartKwh": 77120.0,
+      "meterStopKwh": 77166.8,
+      "totalEnergyDeliveredKwh": 46.8,
+      "terminationReason": "Remote"
+    },
+    {
+      "transactionId": "TXN-20260713-0004",
+      "chargerId": "EVR-FLEET-0003",
+      "connectorId": 1,
+      "startTime": "2026-07-13T15:37:02Z",
+      "endTime": "2026-07-13T15:39:44Z",
+      "meterStartKwh": 30455.7,
+      "meterStopKwh": 30456.2,
+      "totalEnergyDeliveredKwh": 0.5,
+      "terminationReason": "EmergencyStop"
+    },
+    {
+      "transactionId": "TXN-20260714-0001",
+      "chargerId": "EVR-FLEET-0005",
+      "connectorId": 1,
+      "startTime": "2026-07-14T07:48:33Z",
+      "endTime": "2026-07-14T11:02:09Z",
+      "meterStartKwh": 8110.9,
+      "meterStopKwh": 8132.4,
+      "totalEnergyDeliveredKwh": 21.5,
+      "terminationReason": "Local"
+    },
+    {
+      "transactionId": "TXN-20260714-0002",
+      "chargerId": "EVR-FLEET-0003",
+      "connectorId": 2,
+      "startTime": "2026-07-14T13:58:20Z",
+      "endTime": "2026-07-14T14:32:18Z",
+      "meterStartKwh": 19870.2,
+      "meterStopKwh": 19893.0,
+      "totalEnergyDeliveredKwh": 22.8,
+      "terminationReason": "Other"
+    },
+    {
+      "transactionId": "TXN-20260714-0003",
+      "chargerId": "EVR-FLEET-0004",
+      "connectorId": 1,
+      "startTime": "2026-07-14T14:05:47Z",
+      "endTime": "2026-07-14T14:36:12Z",
+      "meterStartKwh": 77201.3,
+      "meterStopKwh": 77252.1,
+      "totalEnergyDeliveredKwh": 50.8,
+      "terminationReason": "EVDisconnected"
+    },
+    {
+      "transactionId": "TXN-20260714-0004",
+      "chargerId": "EVR-FLEET-0001",
+      "connectorId": 2,
+      "startTime": "2026-07-14T15:14:05Z",
+      "endTime": "2026-07-14T15:52:38Z",
+      "meterStartKwh": 48290.6,
+      "meterStopKwh": 48324.4,
+      "totalEnergyDeliveredKwh": 33.8,
+      "terminationReason": "Remote"
+    }
+  ]
+}

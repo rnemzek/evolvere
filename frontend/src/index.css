@@ -1,0 +1,115 @@
+@import "tailwindcss";
+
+/* Leaflet needs an explicit height on its container; the map fills the app shell. */
+.leaflet-container {
+  height: 100%;
+  width: 100%;
+  background: #0a0f1a;
+}
+
+/* --- Charger hover tooltip ------------------------------------------------ */
+
+.charger-tooltip {
+  background: rgba(15, 23, 42, 0.94);
+  backdrop-filter: blur(6px);
+  border: 1px solid rgba(34, 211, 238, 0.35);
+  border-radius: 0.75rem;
+  box-shadow:
+    0 0 18px rgba(34, 211, 238, 0.12),
+    0 10px 30px rgba(0, 0, 0, 0.55);
+  color: #e2e8f0;
+  padding: 0.65rem 0.8rem;
+  white-space: normal;
+}
+
+.charger-tooltip.leaflet-tooltip-top::before {
+  border-top-color: rgba(34, 211, 238, 0.45);
+}
+
+.charger-tooltip.leaflet-tooltip-bottom::before {
+  border-bottom-color: rgba(34, 211, 238, 0.45);
+}
+
+/* Touch-only devices get the full drawer on tap; suppress the hover tooltip
+   so it can't overlap it. */
+@media (hover: none) {
+  .charger-tooltip {
+    display: none !important;
+  }
+}
+
+/* --- Charger marker states ------------------------------------------------ */
+
+.charger-marker {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.charger-marker .dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  z-index: 2;
+}
+
+.charger-marker .ring {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  z-index: 1;
+}
+
+.charger-marker.healthy .dot {
+  background: #22c55e;
+  box-shadow: 0 0 8px 2px rgba(34, 197, 94, 0.8);
+}
+
+.charger-marker.healthy .ring {
+  border: 2px solid rgba(34, 197, 94, 0.9);
+  animation: pulse-ring 2.2s ease-out infinite;
+}
+
+.charger-marker.faulted .dot {
+  background: #ef4444;
+  box-shadow: 0 0 10px 3px rgba(239, 68, 68, 0.9);
+  animation: flash-dot 0.9s steps(2, jump-none) infinite;
+}
+
+.charger-marker.faulted .ring {
+  border: 3px solid rgba(239, 68, 68, 0.95);
+  animation: pulse-ring 0.9s ease-out infinite;
+}
+
+@keyframes pulse-ring {
+  0% {
+    transform: scale(1);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(3);
+    opacity: 0;
+  }
+}
+
+@keyframes flash-dot {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.25;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .charger-marker .dot,
+  .charger-marker .ring {
+    animation: none;
+  }
+}
