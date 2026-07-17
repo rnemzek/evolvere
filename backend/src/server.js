@@ -1,5 +1,7 @@
 import express from 'express';
 import cors from 'cors';
+import compression from 'compression';
+import { existsSync } from 'node:fs';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,6 +14,16 @@ import {
   onFleetChange,
 } from './services/chargerService.js';
 import { sendCriticalAlert } from './services/smsNotifier.js';
+import { initDirectory, getDirectory, syncDirectory, getTopology, DB_FILE } from './services/chargerDirectory.js';
+import {
+  triggerEvent,
+  resolveEvent,
+  listEvents,
+  getEnvironmentStatus,
+  initSimulator,
+} from './services/environmentalSimulator.js';
+import { enrichAlertOnChange, getAlertBriefs, initTriage } from './services/triageService.js';
+import { getRoiAnalytics } from './services/analyticsService.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -49,6 +61,16 @@ async function saveSubscribers() {
 }
 
 app.use(cors());
+// Gzip all text/json egress. SSE must be excluded: compression buffers the
+// stream and events would never flush to connected dashboards.
+app.use(
+  compression({
+    filter: (req, res) =>
+      req.headers.accept === 'text/event-stream' || req.path === '/api/v1/fleet/stream'
+        ? false
+        : compression.filter(req, res),
+  })
+);
 app.use(express.json());
 
 app.get('/api/health', (_req, res) => {
@@ -120,6 +142,81 @@ app.post('/api/v1/internal/toggle-status', async (req, res) => {
   }
 });
 
+// --- Shadow-ingestion directory (UOW-06) --------------------------------------
+// Real public charger locations discovered via OpenChargeMap, cached in SQLite.
+
+app.get('/api/v1/directory/chargers', (_req, res) => {
+  try {
+    res.json(getDirectory());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/v1/topology', (_req, res) => {
+  try {
+    res.json(getTopology());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/v1/directory/sync', async (req, res) => {
+  const { latitude, longitude, distanceKm, maxResults } = req.body ?? {};
+  const overrides = {};
+  for (const [key, value] of Object.entries({ latitude, longitude, distanceKm, maxResults })) {
+    if (value !== undefined) {
+      if (!Number.isFinite(Number(value))) {
+        return res.status(400).json({ error: `${key} must be numeric` });
+      }
+      overrides[key] = Number(value);
+    }
+  }
+  try {
+    res.json(await syncDirectory(overrides));
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+// --- Environmental Event Simulator (UOW-06 Task 6.3) ---------------------------
+// Regional outage triggers across the infrastructure topology; synthetic fleet
+// faults cascade through the standard SSE/alert pipeline.
+
+app.get('/api/v1/simulator/events', (req, res) => {
+  try {
+    res.json({ events: listEvents({ includeResolved: req.query.includeResolved === '1' }) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/v1/simulator/trigger', async (req, res) => {
+  try {
+    res.json(await triggerEvent(req.body ?? {}));
+  } catch (err) {
+    res.status(err.statusCode ?? 500).json({ error: err.message });
+  }
+});
+
+app.post('/api/v1/simulator/resolve', async (req, res) => {
+  const { eventId } = req.body ?? {};
+  if (!eventId) return res.status(400).json({ error: 'eventId is required' });
+  try {
+    res.json(await resolveEvent(eventId));
+  } catch (err) {
+    res.status(err.statusCode ?? 500).json({ error: err.message });
+  }
+});
+
+app.get('/api/v1/environment/status', (_req, res) => {
+  try {
+    res.json(getEnvironmentStatus());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // --- SMS alert subscriptions --------------------------------------------------
 
 app.get('/api/v1/fleet/subscriptions', (_req, res) => {
@@ -144,9 +241,35 @@ app.post('/api/v1/fleet/subscribe', async (req, res) => {
   });
 });
 
-// Alert dispatcher: broadcast every change to SSE clients; on new faults,
-// fan critical SMS alerts out to subscribers.
+// Pre-computed AI Diagnostic Briefs (UOW-06 Task 6.5): enriched synchronously
+// on every fault, read here with zero generation latency.
+app.get('/api/v1/alerts/briefs', (_req, res) => {
+  try {
+    res.json({ briefs: getAlertBriefs() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ROI & Operational Analytics aggregator (UOW-06 Task 6.6).
+app.get('/api/v1/analytics/roi', (_req, res) => {
+  try {
+    res.json(getRoiAnalytics());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Alert dispatcher: enrich the persistent triage brief first (synchronous, so
+// it is queryable before clients react), then broadcast to SSE clients; on new
+// faults, fan critical alerts out to subscribers.
 onFleetChange(({ snapshot, event }) => {
+  try {
+    enrichAlertOnChange({ snapshot, event });
+  } catch (err) {
+    console.error(`Alert brief enrichment failed: ${err.message}`);
+  }
+
   const payload = `data: ${JSON.stringify(snapshot)}\n\n`;
   for (const client of sseClients) {
     client.write(payload);
@@ -163,21 +286,63 @@ onFleetChange(({ snapshot, event }) => {
 });
 
 // --- Production SPA hosting ----------------------------------------------------
-// Serve the built frontend when present (Railway single-service deploy); the Vite
-// dev server proxy covers local development, where dist/ may not exist.
+// NODE_ENV=production always mounts the built frontend (Railway single-service
+// deploy); outside production the mount also activates when a dist build exists,
+// so local production-build verification keeps working. Otherwise the Vite dev
+// proxy owns the frontend.
 
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 const DIST_DIR = path.join(SRC_DIR, '..', '..', 'frontend', 'dist');
+const DIST_BUILD_PRESENT = existsSync(path.join(DIST_DIR, 'index.html'));
+const SPA_HOSTING = IS_PRODUCTION || DIST_BUILD_PRESENT;
 
-app.use(express.static(DIST_DIR));
-app.get(/^\/(?!api\/).*/, (_req, res) => {
-  res.sendFile(path.join(DIST_DIR, 'index.html'), (err) => {
-    if (err) res.status(404).json({ error: 'SPA build not found — run npm run build' });
+if (SPA_HOSTING) {
+  app.use(
+    express.static(DIST_DIR, {
+      setHeaders: (res, filePath) => {
+        // Vite emits content-hashed filenames under assets/ — cache immutably;
+        // everything else (index.html, favicons) must revalidate every load.
+        if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        } else {
+          res.setHeader('Cache-Control', 'no-cache');
+        }
+      },
+    })
+  );
+
+  // Wild-card catch-all: forward every non-API path to the SPA shell so
+  // client-side routes resolve on hard refresh.
+  app.get(/^\/(?!api\/).*/, (_req, res) => {
+    res.setHeader('Cache-Control', 'no-cache');
+    res.sendFile(path.join(DIST_DIR, 'index.html'), (err) => {
+      if (err) res.status(404).json({ error: 'SPA build not found — run npm run build' });
+    });
   });
-});
+}
 
 await initFleetState();
 await loadSubscribers();
+await initDirectory();
+await initSimulator();
+initTriage(await getFleetStatus());
 
 app.listen(PORT, () => {
   console.log(`obszilla backend listening on port ${PORT}`);
+  console.log(`[boot] mode=${process.env.NODE_ENV ?? 'development'} | compression=gzip (SSE stream excluded)`);
+  console.log(
+    `[boot] SPA hosting: ${
+      SPA_HOSTING
+        ? `${DIST_DIR} (${IS_PRODUCTION ? 'NODE_ENV=production' : 'dist build detected'}) | assets cached immutable, shell no-cache`
+        : 'disabled — no dist build; frontend served by Vite dev proxy'
+    }`
+  );
+  console.log(`[boot] directory DB: ${DB_FILE} (SQLite via node:sqlite)`);
+  console.log(
+    `[boot] OpenChargeMap: ${
+      process.env.OCM_API_KEY
+        ? 'OCM_API_KEY present — live discovery enabled, seed fixture on failure'
+        : 'no OCM_API_KEY — seed-fixture fallback active'
+    } | Zero Impact fleet token: ${process.env.ZERO_IMPACT_API_TOKEN ? 'present' : 'absent (mock fleet profile)'}`
+  );
 });

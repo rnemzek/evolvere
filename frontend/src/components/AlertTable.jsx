@@ -24,13 +24,13 @@ function AlertTable({ alerts, selectedAlertId, onSelectAlert }) {
         <h2 className="text-sm font-bold uppercase tracking-widest text-slate-300">
           Alert Desk
         </h2>
-        <span className="text-xs text-slate-500">{alerts.length} active</span>
+        <span className="text-xs text-slate-400">{alerts.length} active</span>
       </header>
 
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
-            <tr className="text-left text-xs uppercase tracking-wider text-slate-500 border-b border-slate-800">
+            <tr className="text-left text-xs uppercase tracking-wider text-slate-400 border-b border-slate-800">
               <th className="px-4 py-2 font-medium">Severity</th>
               <th className="px-4 py-2 font-medium">Timestamp</th>
               <th className="px-4 py-2 font-medium">Station</th>
@@ -67,6 +67,7 @@ function AlertTable({ alerts, selectedAlertId, onSelectAlert }) {
                 <td className="px-4 py-3">
                   <button
                     type="button"
+                    aria-label={`Triage ${alert.category} at ${alert.chargerId} port ${alert.connectorId ?? ''}`}
                     onClick={() => onSelectAlert(alert)}
                     className="min-h-11 min-w-11 px-3 rounded-lg border border-cyan-700/60 text-cyan-300 text-xs font-semibold uppercase tracking-wide hover:bg-cyan-500/10 active:bg-cyan-500/20"
                   >
@@ -77,7 +78,7 @@ function AlertTable({ alerts, selectedAlertId, onSelectAlert }) {
             ))}
             {alerts.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-4 py-8 text-center text-slate-500">
+                <td colSpan={6} className="px-4 py-8 text-center text-slate-400">
                   No active alerts — fleet nominal.
                 </td>
               </tr>

@@ -1,6 +1,21 @@
 import { generateDiagnosticBrief } from '../services/alertEngine.js'
 
-function DiagnosticBrief({ alert }) {
+const CAUSE_LABELS = {
+  EXTERNAL_GRID_FAILURE: 'External · Grid',
+  EXTERNAL_NETWORK_DROP: 'External · Carrier',
+  ENVIRONMENTAL_WEATHER: 'Environmental · Weather',
+  LOCAL_HARDWARE: 'Local Hardware',
+}
+
+function DiagnosticBrief({ alert, briefs = [] }) {
+  // Server-enriched briefs are pre-computed at fault time; the client
+  // generator only backfills alert types without a persisted record
+  // (suspensions, zero-output trends, session terminations).
+  const cached = alert
+    ? briefs.find(
+        (b) => b.chargerId === alert.chargerId && b.connectorId === alert.connectorId && b.code === alert.code
+      )
+    : null
   return (
     <section
       aria-label="Nemzilla AI Diagnostic Brief"
@@ -16,15 +31,22 @@ function DiagnosticBrief({ alert }) {
       <div className="p-4">
         {alert ? (
           <>
-            <p className="text-xs font-mono text-slate-500 mb-3">
-              {alert.chargerId} · port {alert.connectorId} · {alert.category}
+            <p className="text-xs font-mono text-slate-400 mb-3 flex items-center gap-2 flex-wrap">
+              <span>
+                {alert.chargerId} · port {alert.connectorId} · {alert.category}
+              </span>
+              {cached ? (
+                <span className="rounded-full border border-cyan-700 bg-cyan-500/10 px-2 py-0.5 text-[10px] font-bold tracking-wide text-cyan-300">
+                  {CAUSE_LABELS[cached.causeClass] ?? cached.causeClass}
+                </span>
+              ) : null}
             </p>
             <p className="text-sm leading-relaxed text-slate-200 whitespace-pre-line">
-              {generateDiagnosticBrief(alert)}
+              {cached ? cached.brief : generateDiagnosticBrief(alert)}
             </p>
           </>
         ) : (
-          <p className="text-sm text-slate-500">
+          <p className="text-sm text-slate-400">
             Select an alert from the desk to generate a triage brief with probable
             cause and SOP action steps.
           </p>

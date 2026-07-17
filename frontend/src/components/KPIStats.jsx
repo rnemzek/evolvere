@@ -3,12 +3,12 @@ const REVENUE_AT_RISK_PER_PORT_HOUR = 22.5 // $0.45/kWh × 50 kW commercial fast
 function StatTile({ label, value, unit, tone = 'text-cyan-400', caption }) {
   return (
     <div className="rounded-xl border border-slate-800 bg-slate-900/70 backdrop-blur p-4">
-      <p className="text-xs uppercase tracking-widest text-slate-500">{label}</p>
+      <p className="text-xs uppercase tracking-widest text-slate-400">{label}</p>
       <p className={`mt-1 text-3xl font-bold tabular-nums ${tone}`}>
         {value}
         {unit && <span className="ml-1 text-base font-medium text-slate-400">{unit}</span>}
       </p>
-      {caption && <p className="mt-1 text-xs text-slate-500">{caption}</p>}
+      {caption && <p className="mt-1 text-xs text-slate-400">{caption}</p>}
     </div>
   )
 }

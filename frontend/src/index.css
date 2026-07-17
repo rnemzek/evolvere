@@ -107,9 +107,27 @@
   }
 }
 
+/* Grid Power overlay: substation zone pulses while a GRID_FAILURE is active. */
+.grid-zone-outage {
+  animation: grid-outage-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes grid-outage-pulse {
+  0%,
+  100% {
+    fill-opacity: 0.12;
+    stroke-opacity: 0.7;
+  }
+  50% {
+    fill-opacity: 0.38;
+    stroke-opacity: 1;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .charger-marker .dot,
-  .charger-marker .ring {
+  .charger-marker .ring,
+  .grid-zone-outage {
     animation: none;
   }
 }

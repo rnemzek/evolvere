@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { postToggleStatus, subscribeToAlerts, fetchAlertSubscriptions } from '../services/fleetApi.js'
-import { isStationFaulted } from './CommandCenterMap.jsx'
+import { isStationFaulted } from '../services/stationHealth.js'
 
 const FAULT_CODES = ['GroundFailure', 'Power_Loss']
 
@@ -35,6 +35,7 @@ function FaultSwitch({ station, index }) {
       }`}
     >
       <span
+        aria-hidden="true"
         className={`absolute top-1 h-8 w-8 rounded-full transition-all ${
           faulted ? 'left-7 bg-red-400' : 'left-1 bg-slate-400'
         }`}
@@ -127,17 +128,63 @@ function SubscribeForm() {
 }
 
 function ControlPanel({ open, stations, onClose }) {
+  const panelRef = useRef(null)
+
+  // Modal focus management: trap Tab inside the drawer while open, close on
+  // Escape, and hand focus back to the triggering button on close.
+  useEffect(() => {
+    if (!open) return
+    const panel = panelRef.current
+    const previouslyFocused = document.activeElement
+
+    const focusables = () =>
+      [...panel.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')]
+        .filter((node) => !node.disabled)
+
+    focusables()[0]?.focus()
+
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        onClose()
+        return
+      }
+      if (e.key !== 'Tab') return
+      const nodes = focusables()
+      if (nodes.length === 0) return
+      const first = nodes[0]
+      const last = nodes[nodes.length - 1]
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault()
+        last.focus()
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault()
+        first.focus()
+      }
+    }
+
+    panel.addEventListener('keydown', onKeyDown)
+    return () => {
+      panel.removeEventListener('keydown', onKeyDown)
+      previouslyFocused?.focus?.()
+    }
+  }, [open, onClose])
+
   if (!open) return null
 
   return (
-    <aside
+    <div
+      ref={panelRef}
+      role="dialog"
+      aria-modal="true"
       className="absolute z-[1100] bg-slate-900/95 backdrop-blur border-slate-700 text-slate-100 shadow-2xl
                  inset-x-0 bottom-0 max-h-[75vh] rounded-t-2xl border-t
                  md:inset-x-auto md:right-0 md:top-0 md:bottom-0 md:w-96 md:max-h-none md:rounded-none md:border-t-0 md:border-l
                  flex flex-col"
       aria-label="Demo control panel"
     >
-      <header className="flex items-center justify-between gap-3 p-4 border-b border-slate-800">
+      {/* div, not <header>: inside role="dialog" a header element would compute
+          as a second banner landmark and break landmark uniqueness. */}
+      <div className="flex items-center justify-between gap-3 p-4 border-b border-slate-800">
         <div>
           <h2 className="text-sm font-bold uppercase tracking-widest text-amber-400">
             Control Panel
@@ -152,7 +199,7 @@ function ControlPanel({ open, stations, onClose }) {
         >
           &times;
         </button>
-      </header>
+      </div>
 
       <div className="overflow-y-auto p-4 space-y-4">
         <ul className="space-y-2">
@@ -177,7 +224,7 @@ function ControlPanel({ open, stations, onClose }) {
           <SubscribeForm />
         </div>
       </div>
-    </aside>
+    </div>
   )
 }
 
