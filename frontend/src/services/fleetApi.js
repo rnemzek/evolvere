@@ -40,6 +40,26 @@ export function postToggleStatus({ chargerId, connectorId, targetStatus, lastErr
   });
 }
 
+export function fetchTopology() {
+  return getJson('/api/v1/topology');
+}
+
+export function fetchDirectoryChargers() {
+  return getJson('/api/v1/directory/chargers');
+}
+
+export function fetchEnvironmentStatus() {
+  return getJson('/api/v1/environment/status');
+}
+
+export function fetchAlertBriefs() {
+  return getJson('/api/v1/alerts/briefs');
+}
+
+export function fetchRoiAnalytics() {
+  return getJson('/api/v1/analytics/roi');
+}
+
 export function subscribeToAlerts(phoneNumber) {
   return postJson('/api/v1/fleet/subscribe', { phoneNumber });
 }

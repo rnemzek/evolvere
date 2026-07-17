@@ -7,6 +7,8 @@ export const SEVERITY = {
 const FAULT_CATEGORIES = {
   GroundFailure: { severity: SEVERITY.CRITICAL, label: 'Ground Failure' },
   Power_Loss: { severity: SEVERITY.CRITICAL, label: 'Total Power Loss' },
+  Comms_Loss: { severity: SEVERITY.WARNING, label: 'Carrier Comms Loss' },
+  Weather_Impact: { severity: SEVERITY.WARNING, label: 'Weather Impact' },
   ZeroOutput: { severity: SEVERITY.WARNING, label: 'Zero Output Trend' },
   SuspendedEVSE: { severity: SEVERITY.WARNING, label: 'Connector Suspended' },
   EmergencyStop: { severity: SEVERITY.INFO, label: 'Emergency Stop Termination' },

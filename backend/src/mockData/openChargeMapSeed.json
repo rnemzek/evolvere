@@ -1,0 +1,245 @@
+[
+  {
+    "ID": 148821,
+    "AddressInfo": {
+      "Title": "Tustin Marketplace — Target Lot",
+      "AddressLine1": "2882 El Camino Real",
+      "Town": "Tustin",
+      "StateOrProvince": "CA",
+      "Postcode": "92782",
+      "Latitude": 33.7311,
+      "Longitude": -117.8109
+    },
+    "OperatorInfo": { "Title": "ChargePoint" },
+    "StatusType": { "IsOperational": true },
+    "UsageCost": "$0.31/kWh",
+    "NumberOfPoints": 4,
+    "Connections": [
+      { "ConnectionType": { "Title": "J1772" }, "PowerKW": 7.2, "Quantity": 4 }
+    ],
+    "DataProvider": { "Title": "Open Charge Map" }
+  },
+  {
+    "ID": 151204,
+    "AddressInfo": {
+      "Title": "The District at Tustin Legacy — Garage B",
+      "AddressLine1": "2437 Park Ave",
+      "Town": "Tustin",
+      "StateOrProvince": "CA",
+      "Postcode": "92782",
+      "Latitude": 33.7089,
+      "Longitude": -117.8342
+    },
+    "OperatorInfo": { "Title": "EVgo" },
+    "StatusType": { "IsOperational": true },
+    "UsageCost": "$0.43/kWh",
+    "NumberOfPoints": 6,
+    "Connections": [
+      { "ConnectionType": { "Title": "CCS1" }, "PowerKW": 100, "Quantity": 4 },
+      { "ConnectionType": { "Title": "CHAdeMO" }, "PowerKW": 50, "Quantity": 2 }
+    ],
+    "DataProvider": { "Title": "Open Charge Map" }
+  },
+  {
+    "ID": 149877,
+    "AddressInfo": {
+      "Title": "Irvine Spectrum Center — Lot 5",
+      "AddressLine1": "670 Spectrum Center Dr",
+      "Town": "Irvine",
+      "StateOrProvince": "CA",
+      "Postcode": "92618",
+      "Latitude": 33.6501,
+      "Longitude": -117.7426
+    },
+    "OperatorInfo": { "Title": "Tesla (incl. non-Tesla)" },
+    "StatusType": { "IsOperational": true },
+    "UsageCost": "$0.36/kWh",
+    "NumberOfPoints": 12,
+    "Connections": [
+      { "ConnectionType": { "Title": "NACS" }, "PowerKW": 250, "Quantity": 12 }
+    ],
+    "DataProvider": { "Title": "Open Charge Map" }
+  },
+  {
+    "ID": 152366,
+    "AddressInfo": {
+      "Title": "Santa Ana Civic Center Plaza",
+      "AddressLine1": "20 Civic Center Plaza",
+      "Town": "Santa Ana",
+      "StateOrProvince": "CA",
+      "Postcode": "92701",
+      "Latitude": 33.7492,
+      "Longitude": -117.8683
+    },
+    "OperatorInfo": { "Title": "Blink Charging" },
+    "StatusType": { "IsOperational": true },
+    "UsageCost": "$0.39/kWh",
+    "NumberOfPoints": 2,
+    "Connections": [
+      { "ConnectionType": { "Title": "J1772" }, "PowerKW": 6.6, "Quantity": 2 }
+    ],
+    "DataProvider": { "Title": "Open Charge Map" }
+  },
+  {
+    "ID": 153018,
+    "AddressInfo": {
+      "Title": "MainPlace Mall — West Deck",
+      "AddressLine1": "2800 N Main St",
+      "Town": "Santa Ana",
+      "StateOrProvince": "CA",
+      "Postcode": "92705",
+      "Latitude": 33.7783,
+      "Longitude": -117.8687
+    },
+    "OperatorInfo": { "Title": "Electrify America" },
+    "StatusType": { "IsOperational": true },
+    "UsageCost": "$0.48/kWh",
+    "NumberOfPoints": 6,
+    "Connections": [
+      { "ConnectionType": { "Title": "CCS1" }, "PowerKW": 150, "Quantity": 5 },
+      { "ConnectionType": { "Title": "CHAdeMO" }, "PowerKW": 50, "Quantity": 1 }
+    ],
+    "DataProvider": { "Title": "Open Charge Map" }
+  },
+  {
+    "ID": 150442,
+    "AddressInfo": {
+      "Title": "John Wayne Airport — Parking A2",
+      "AddressLine1": "18601 Airport Way",
+      "Town": "Santa Ana",
+      "StateOrProvince": "CA",
+      "Postcode": "92707",
+      "Latitude": 33.6757,
+      "Longitude": -117.8622
+    },
+    "OperatorInfo": { "Title": "ChargePoint" },
+    "StatusType": { "IsOperational": true },
+    "UsageCost": "Free (parking fees apply)",
+    "NumberOfPoints": 8,
+    "Connections": [
+      { "ConnectionType": { "Title": "J1772" }, "PowerKW": 7.2, "Quantity": 8 }
+    ],
+    "DataProvider": { "Title": "Open Charge Map" }
+  },
+  {
+    "ID": 154511,
+    "AddressInfo": {
+      "Title": "UCI Research Park — Structure 1",
+      "AddressLine1": "5301 California Ave",
+      "Town": "Irvine",
+      "StateOrProvince": "CA",
+      "Postcode": "92617",
+      "Latitude": 33.6405,
+      "Longitude": -117.8443
+    },
+    "OperatorInfo": { "Title": "PowerFlex" },
+    "StatusType": { "IsOperational": true },
+    "UsageCost": "$0.28/kWh",
+    "NumberOfPoints": 10,
+    "Connections": [
+      { "ConnectionType": { "Title": "J1772" }, "PowerKW": 9.6, "Quantity": 10 }
+    ],
+    "DataProvider": { "Title": "Open Charge Map" }
+  },
+  {
+    "ID": 155720,
+    "AddressInfo": {
+      "Title": "Orange Outlets — East Entrance",
+      "AddressLine1": "20 City Blvd W",
+      "Town": "Orange",
+      "StateOrProvince": "CA",
+      "Postcode": "92868",
+      "Latitude": 33.7842,
+      "Longitude": -117.8901
+    },
+    "OperatorInfo": { "Title": "EVgo" },
+    "StatusType": { "IsOperational": false },
+    "UsageCost": "$0.43/kWh",
+    "NumberOfPoints": 4,
+    "Connections": [
+      { "ConnectionType": { "Title": "CCS1" }, "PowerKW": 100, "Quantity": 4 }
+    ],
+    "DataProvider": { "Title": "Open Charge Map" }
+  },
+  {
+    "ID": 156038,
+    "AddressInfo": {
+      "Title": "Costa Mesa — South Coast Plaza P3",
+      "AddressLine1": "3333 Bristol St",
+      "Town": "Costa Mesa",
+      "StateOrProvince": "CA",
+      "Postcode": "92626",
+      "Latitude": 33.6911,
+      "Longitude": -117.8886
+    },
+    "OperatorInfo": { "Title": "Volta" },
+    "StatusType": { "IsOperational": true },
+    "UsageCost": "Free",
+    "NumberOfPoints": 4,
+    "Connections": [
+      { "ConnectionType": { "Title": "J1772" }, "PowerKW": 7.2, "Quantity": 4 }
+    ],
+    "DataProvider": { "Title": "Open Charge Map" }
+  },
+  {
+    "ID": 156927,
+    "AddressInfo": {
+      "Title": "Tustin Legacy — Flight Commons",
+      "AddressLine1": "1701 Flight Way",
+      "Town": "Tustin",
+      "StateOrProvince": "CA",
+      "Postcode": "92782",
+      "Latitude": 33.7018,
+      "Longitude": -117.8276
+    },
+    "OperatorInfo": { "Title": "ChargePoint" },
+    "StatusType": { "IsOperational": true },
+    "UsageCost": "$0.30/kWh",
+    "NumberOfPoints": 6,
+    "Connections": [
+      { "ConnectionType": { "Title": "J1772" }, "PowerKW": 7.2, "Quantity": 4 },
+      { "ConnectionType": { "Title": "CCS1" }, "PowerKW": 62.5, "Quantity": 2 }
+    ],
+    "DataProvider": { "Title": "Open Charge Map" }
+  },
+  {
+    "ID": 157354,
+    "AddressInfo": {
+      "Title": "Irvine Civic Center Garage",
+      "AddressLine1": "1 Civic Center Plaza",
+      "Town": "Irvine",
+      "StateOrProvince": "CA",
+      "Postcode": "92606",
+      "Latitude": 33.6846,
+      "Longitude": -117.7955
+    },
+    "OperatorInfo": { "Title": "ChargePoint" },
+    "StatusType": { "IsOperational": true },
+    "UsageCost": "$0.25/kWh",
+    "NumberOfPoints": 6,
+    "Connections": [
+      { "ConnectionType": { "Title": "J1772" }, "PowerKW": 7.2, "Quantity": 6 }
+    ],
+    "DataProvider": { "Title": "Open Charge Map" }
+  },
+  {
+    "ID": 158109,
+    "AddressInfo": {
+      "Title": "Old Town Tustin — Prospect Ave Lot",
+      "AddressLine1": "300 El Camino Real",
+      "Town": "Tustin",
+      "StateOrProvince": "CA",
+      "Postcode": "92780",
+      "Latitude": 33.7454,
+      "Longitude": -117.8253
+    },
+    "OperatorInfo": { "Title": "Blink Charging" },
+    "StatusType": { "IsOperational": true },
+    "UsageCost": "$0.35/kWh",
+    "NumberOfPoints": 2,
+    "Connections": [
+      { "ConnectionType": { "Title": "J1772" }, "PowerKW": 6.6, "Quantity": 2 }
+    ],
+    "DataProvider": { "Title": "Open Charge Map" }
+  }
+]
