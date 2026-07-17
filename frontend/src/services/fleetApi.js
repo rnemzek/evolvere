@@ -18,6 +18,14 @@ export function fetchLiveTelemetry(transactionId) {
   return getJson(`/api/v1/fleet/telemetry/${encodeURIComponent(transactionId)}`);
 }
 
+// UOW-08 Task 8.4: continuous degradation series for the Alert Desk micro-charts.
+export function fetchTelemetrySeries(chargerId, connectorId, limit = 60) {
+  const q = Number.isFinite(limit) ? `?limit=${limit}` : '';
+  return getJson(
+    `/api/v1/fleet/telemetry-series/${encodeURIComponent(chargerId)}/${encodeURIComponent(connectorId)}${q}`
+  );
+}
+
 async function postJson(url, payload) {
   const res = await fetch(url, {
     method: 'POST',

@@ -6,12 +6,18 @@ import {
   resolveGridNode,
   haversineKm,
 } from './infrastructureTopology.js';
-import { getFleetStatus, toggleConnectorStatus } from './chargerService.js';
+import {
+  getFleetStatus,
+  toggleConnectorStatus,
+  applyTelemetryBatch,
+} from './chargerService.js';
 
-// Environmental Event Simulator (UOW-06 Task 6.3): triggers regional outages
-// across the 6.2 topology. Affected fleet connectors are faulted through
-// toggleConnectorStatus so the existing SSE stream, NOC event log, and frontend
-// alert desk light up exactly as they would for organic hardware faults.
+// Environmental Event Simulator (UOW-06 Task 6.3, upgraded UOW-08 Task 8.1):
+// triggers regional outages across the 6.2 topology. Since 8.1, affected fleet
+// connectors no longer snap instantly to Faulted — they enter a continuous
+// degradation trajectory (voltage sag, thermal climb, current decay) driven by
+// the background tick loop, and fault organically once telemetry crosses
+// critical thresholds. Every tick persists to SQLite and rides the SSE stream.
 
 const EVENT_TYPES = {
   GRID_FAILURE: {
@@ -19,18 +25,24 @@ const EVENT_TYPES = {
     faultCode: 'Power_Loss',
     defaultSeverity: 'CRITICAL',
     label: 'Regional Grid Failure',
+    // Voltage collapse dominates; current decays as the bus browns out.
+    degradation: { weights: { sag: 1.0, heat: 0.25, decay: 0.8 }, trip: 'VOLTAGE' },
   },
   NETWORK_DROP: {
     targetType: 'ISP_CARRIER',
     faultCode: 'Comms_Loss',
     defaultSeverity: 'WARNING',
     label: 'Carrier Network Drop',
+    // Comms loss: electricals stay near nominal, session current bleeds out.
+    degradation: { weights: { sag: 0.1, heat: 0.1, decay: 1.0 }, trip: 'PROGRESS' },
   },
   WEATHER_IMPACT: {
     targetType: 'GEO_CLUSTER',
     faultCode: 'Weather_Impact',
     defaultSeverity: 'WARNING',
     label: 'Severe Weather Impact',
+    // Thermal runaway dominates with moderate electrical instability.
+    degradation: { weights: { sag: 0.3, heat: 1.0, decay: 0.5 }, trip: 'TEMPERATURE' },
   },
 };
 
@@ -55,6 +67,21 @@ function db() {
         started_at    TEXT NOT NULL,
         resolved_at   TEXT
       );
+      CREATE TABLE IF NOT EXISTS telemetry_ticks (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        charger_id    TEXT NOT NULL,
+        connector_id  INTEGER NOT NULL,
+        tick_at       TEXT NOT NULL,
+        voltage_v     REAL NOT NULL,
+        current_a     REAL NOT NULL,
+        temperature_c REAL NOT NULL,
+        power_kw      REAL NOT NULL,
+        status        TEXT NOT NULL,
+        phase         TEXT NOT NULL,
+        event_id      TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_telemetry_ticks_connector
+        ON telemetry_ticks (charger_id, connector_id, id);
     `);
     tableReady = true;
   }
@@ -198,13 +225,16 @@ export async function triggerEvent({ type, targetId, center, radiusKm, severity,
       event.description, event.status, JSON.stringify(affected), event.startedAt, null
     );
 
+  // UOW-08 Task 8.1: no instant working→broken snap. Affected connectors enter
+  // a degradation trajectory; the tick loop faults each one only when its
+  // telemetry crosses critical thresholds (< 200 V sag, > 85 °C, dead current).
   for (const station of affected.fleetStations) {
     for (const connectorId of station.connectorIds) {
-      await toggleConnectorStatus({
+      beginDegradation({
         chargerId: station.chargerId,
         connectorId,
-        targetStatus: 'Faulted',
-        lastErrorCode: spec.faultCode,
+        eventType: type,
+        eventId: event.id,
       });
     }
   }
@@ -239,6 +269,9 @@ export async function resolveEvent(eventId) {
         connectorId,
         targetStatus: 'Available',
       });
+      // Telemetry climbs back toward nominal over the next ticks rather than
+      // snapping — the trajectory unwinds until it reaches baseline.
+      beginRecovery(station.chargerId, connectorId);
     }
   }
 
@@ -255,6 +288,12 @@ export async function resolveEvent(eventId) {
           connectorId,
           targetStatus: 'Faulted',
           lastErrorCode: code,
+        });
+        holdDegradation({
+          chargerId: station.chargerId,
+          connectorId,
+          eventType: other.type,
+          eventId: other.id,
         });
       }
     }
@@ -312,6 +351,13 @@ export async function initSimulator() {
           connectorId,
           targetStatus: 'Faulted',
           lastErrorCode: code,
+        });
+        // State restore, not a fresh outage: pin telemetry at full degradation.
+        holdDegradation({
+          chargerId: station.chargerId,
+          connectorId,
+          eventType: event.type,
+          eventId: event.id,
         });
       }
     }
@@ -371,4 +417,286 @@ export function getEnvironmentStatus() {
       })),
     affectedDirectoryChargers: [...affectedOcmIds],
   };
+}
+
+// --- Continuous Degradation Pipeline (UOW-08 Task 8.1) -------------------------
+// Background tick loop that replaces instant working→broken snaps with
+// fluctuating time-series telemetry: voltage sags decaying below 200 V,
+// temperatures spiking past 85 °C, and exponentially decaying current draw.
+// Every tick persists per-connector samples to SQLite (telemetry_ticks) and
+// broadcasts the mutated fleet snapshot over /api/v1/fleet/stream via
+// applyTelemetryBatch → the standard onFleetChange SSE fan-out.
+
+const TICK_INTERVAL_MS = 5000;
+const RETENTION_TICKS = 720; // per connector ≈ 1 h of history at 5 s cadence
+const TRIM_EVERY_TICKS = 30;
+const RECOVERY_RATE = 0.12;
+const VOLTAGE_CRITICAL_V = 200;
+const TEMP_CRITICAL_C = 85;
+const NOMINAL_VOLTAGE_BY_TYPE = { CCS1: 480, CHAdeMO: 450, J1772: 240 };
+
+// lastErrorCode → degradation profile for faults raised outside the simulator
+// (control-panel toggles, seed-profile faults) so they too emit sick telemetry.
+const CODE_PROFILE = {
+  Power_Loss: 'GRID_FAILURE',
+  GroundFailure: 'GRID_FAILURE',
+  Comms_Loss: 'NETWORK_DROP',
+  Weather_Impact: 'WEATHER_IMPACT',
+  OverTemperature: 'WEATHER_IMPACT',
+};
+
+const degradationStates = new Map(); // "chargerId:connectorId" → trajectory
+const baselines = new Map(); // "chargerId:connectorId" → nominal operating point
+let tickTimer = null;
+let tickCount = 0;
+
+const stateKey = (chargerId, connectorId) => `${chargerId}:${Number(connectorId)}`;
+const jitter = (amplitude) => (Math.random() * 2 - 1) * amplitude;
+const clamp01 = (n) => Math.min(1, Math.max(0, n));
+const round1 = (n) => Math.round(n * 10) / 10;
+
+function newState({ chargerId, connectorId, eventType, eventId, progress = 0 }) {
+  return {
+    chargerId,
+    connectorId: Number(connectorId),
+    eventType,
+    eventId: eventId ?? null,
+    direction: 'DEGRADING',
+    progress,
+    ratePerTick: 0.04 + Math.random() * 0.06, // threshold breach in ~1–2 min
+    sagFloorV: 150 + Math.random() * 35, // well below the 200 V critical line
+    tempPeakC: 92 + Math.random() * 12, // well above the 85 °C critical line
+    faulted: progress >= 1,
+  };
+}
+
+function beginDegradation({ chargerId, connectorId, eventType, eventId }) {
+  degradationStates.set(
+    stateKey(chargerId, connectorId),
+    newState({ chargerId, connectorId, eventType, eventId })
+  );
+}
+
+/** Pin a connector at full degradation (boot re-hydration, overlap re-faulting). */
+function holdDegradation({ chargerId, connectorId, eventType, eventId }) {
+  degradationStates.set(
+    stateKey(chargerId, connectorId),
+    newState({ chargerId, connectorId, eventType, eventId, progress: 1 })
+  );
+}
+
+function beginRecovery(chargerId, connectorId) {
+  const state = degradationStates.get(stateKey(chargerId, connectorId));
+  if (state) {
+    state.direction = 'RECOVERING';
+    state.faulted = false;
+  }
+}
+
+/**
+ * Nominal operating point, captured on first sight and re-captured when the
+ * connector's status changes — degraded samples never contaminate the baseline.
+ */
+function baselineFor(chargerId, connector) {
+  const key = stateKey(chargerId, connector.connectorId);
+  const cached = baselines.get(key);
+  if (cached && cached.lastStatus === connector.status) return cached;
+
+  const voltageV = NOMINAL_VOLTAGE_BY_TYPE[connector.type] ?? 480;
+  const powerKW = connector.status === 'Charging' ? Math.max(connector.currentPowerKW, 3) : 0;
+  const baseline = {
+    lastStatus: connector.status,
+    voltageV,
+    temperatureC: (connector.status === 'Charging' ? 46 : 36) + jitter(3),
+    currentA: (powerKW * 1000) / voltageV,
+  };
+  baselines.set(key, baseline);
+  return baseline;
+}
+
+function sampleConnector(state, baseline) {
+  if (!state) {
+    const voltageV = baseline.voltageV + jitter(baseline.voltageV * 0.008);
+    const currentA = Math.max(0, baseline.currentA + jitter(baseline.currentA * 0.04));
+    return {
+      voltageV,
+      currentA,
+      temperatureC: baseline.temperatureC + jitter(1.1),
+      powerKW: (voltageV * currentA) / 1000,
+    };
+  }
+
+  const { weights } = EVENT_TYPES[state.eventType].degradation;
+  const p = state.progress;
+  const voltageV =
+    baseline.voltageV -
+    (baseline.voltageV - state.sagFloorV) * p * weights.sag +
+    jitter(baseline.voltageV * 0.012);
+  const temperatureC =
+    baseline.temperatureC +
+    (state.tempPeakC - baseline.temperatureC) * p * weights.heat +
+    jitter(1.4);
+  const currentA = Math.max(
+    0,
+    baseline.currentA * (1 - weights.decay + weights.decay * Math.exp(-3 * p)) +
+      jitter(baseline.currentA * 0.05)
+  );
+  return { voltageV, currentA, temperatureC, powerKW: (voltageV * currentA) / 1000 };
+}
+
+async function runDegradationTick() {
+  const fleet = await getFleetStatus();
+  const database = db();
+  const tickAt = new Date().toISOString();
+  const updates = [];
+  const pendingFaults = [];
+  const insertTick = database.prepare(`INSERT INTO telemetry_ticks
+    (charger_id, connector_id, tick_at, voltage_v, current_a, temperature_c, power_kw, status, phase, event_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+
+  for (const station of fleet.stations) {
+    for (const connector of station.connectors) {
+      const key = stateKey(station.chargerId, connector.connectorId);
+      let state = degradationStates.get(key);
+
+      // Faults raised outside the pipeline still emit degraded telemetry.
+      if (!state && connector.status === 'Faulted') {
+        state = newState({
+          chargerId: station.chargerId,
+          connectorId: connector.connectorId,
+          eventType: CODE_PROFILE[connector.lastErrorCode] ?? 'GRID_FAILURE',
+          progress: 1,
+        });
+        degradationStates.set(key, state);
+      }
+
+      if (state) {
+        state.progress = clamp01(
+          state.progress +
+            (state.direction === 'DEGRADING' ? state.ratePerTick : -RECOVERY_RATE)
+        );
+        if (state.direction === 'RECOVERING' && state.progress <= 0) {
+          degradationStates.delete(key);
+          state = null;
+        }
+      }
+
+      const baseline = baselineFor(station.chargerId, connector);
+      const sample = sampleConnector(state, baseline);
+      let phase = 'HEALTHY';
+
+      if (state) {
+        phase =
+          state.direction === 'RECOVERING'
+            ? 'RECOVERING'
+            : state.faulted
+              ? 'CRITICAL'
+              : 'DEGRADING';
+
+        const { trip } = EVENT_TYPES[state.eventType].degradation;
+        const tripped =
+          trip === 'VOLTAGE'
+            ? sample.voltageV < VOLTAGE_CRITICAL_V
+            : trip === 'TEMPERATURE'
+              ? sample.temperatureC > TEMP_CRITICAL_C
+              : state.progress >= 1;
+        if (
+          state.direction === 'DEGRADING' &&
+          !state.faulted &&
+          tripped &&
+          connector.status !== 'Faulted'
+        ) {
+          state.faulted = true;
+          phase = 'CRITICAL';
+          pendingFaults.push({
+            chargerId: station.chargerId,
+            connectorId: connector.connectorId,
+            faultCode: EVENT_TYPES[state.eventType].faultCode,
+          });
+        }
+      }
+
+      const voltageV = round1(sample.voltageV);
+      const currentA = round1(sample.currentA);
+      const temperatureC = round1(sample.temperatureC);
+      const powerKW = Math.round(sample.powerKW * 100) / 100;
+
+      insertTick.run(
+        station.chargerId, connector.connectorId, tickAt,
+        voltageV, currentA, temperatureC, powerKW,
+        connector.status, phase, state?.eventId ?? null
+      );
+      updates.push({
+        chargerId: station.chargerId,
+        connectorId: connector.connectorId,
+        voltageV, currentA, temperatureC, powerKW, tickAt,
+      });
+    }
+  }
+
+  tickCount += 1;
+  if (tickCount % TRIM_EVERY_TICKS === 0) {
+    database
+      .prepare(`DELETE FROM telemetry_ticks WHERE id NOT IN (
+        SELECT id FROM telemetry_ticks AS keep
+        WHERE keep.charger_id = telemetry_ticks.charger_id
+          AND keep.connector_id = telemetry_ticks.connector_id
+        ORDER BY keep.id DESC LIMIT ?)`)
+      .run(RETENTION_TICKS);
+  }
+
+  // One SSE snapshot per tick; threshold-crossing faults then flow through the
+  // standard toggle path so briefs, SMS fan-out, and the ROI log all fire.
+  await applyTelemetryBatch(updates);
+  for (const fault of pendingFaults) {
+    await toggleConnectorStatus({
+      chargerId: fault.chargerId,
+      connectorId: fault.connectorId,
+      targetStatus: 'Faulted',
+      lastErrorCode: fault.faultCode,
+    });
+    nocLog('DEGRADATION_THRESHOLD_FAULT', fault);
+  }
+}
+
+export function startDegradationLoop() {
+  if (tickTimer) return;
+  db(); // ensure telemetry_ticks exists before the first tick races a reader
+  tickTimer = setInterval(() => {
+    runDegradationTick().catch((err) =>
+      console.error(`Degradation tick failed: ${err.message}`)
+    );
+  }, TICK_INTERVAL_MS);
+  tickTimer.unref?.();
+  nocLog('DEGRADATION_PIPELINE_STARTED', {
+    tickIntervalMs: TICK_INTERVAL_MS,
+    retentionTicks: RETENTION_TICKS,
+    thresholds: { voltageSagV: VOLTAGE_CRITICAL_V, temperatureC: TEMP_CRITICAL_C },
+  });
+}
+
+export function stopDegradationLoop() {
+  if (tickTimer) {
+    clearInterval(tickTimer);
+    tickTimer = null;
+  }
+}
+
+/** Persisted time-series read path (feeds the UOW-08 Task 8.4 brief charts). */
+export function getTelemetrySeries({ chargerId, connectorId, limit = 120 }) {
+  const rows = db()
+    .prepare(`SELECT tick_at, voltage_v, current_a, temperature_c, power_kw, status, phase, event_id
+      FROM telemetry_ticks WHERE charger_id = ? AND connector_id = ?
+      ORDER BY id DESC LIMIT ?`)
+    .all(chargerId, Number(connectorId), Math.min(Math.max(1, limit), RETENTION_TICKS));
+  return rows.reverse().map((row) => ({
+    tickAt: row.tick_at,
+    voltageV: row.voltage_v,
+    currentA: row.current_a,
+    temperatureC: row.temperature_c,
+    powerKW: row.power_kw,
+    status: row.status,
+    phase: row.phase,
+    eventId: row.event_id,
+  }));
 }

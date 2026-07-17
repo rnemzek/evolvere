@@ -156,6 +156,7 @@ function App() {
             <div className="lg:col-span-2">
               <AlertTable
                 alerts={alerts}
+                briefs={briefs}
                 selectedAlertId={selectedAlert?.id}
                 onSelectAlert={setSelectedAlert}
               />

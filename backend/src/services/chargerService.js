@@ -76,9 +76,12 @@ export async function toggleConnectorStatus({ chargerId, connectorId, targetStat
   if (!connector) throw new Error(`Unknown connectorId ${connectorId} on ${chargerId}`);
 
   connector.status = targetStatus;
-  if (targetStatus === 'Faulted') {
+  if (targetStatus === 'Faulted' || targetStatus === 'Offline') {
+    // Offline (UOW-08 Task 8.3): heartbeat lost — the carrier-layer alarm
+    // state analyzed by the spatial correlator alongside hard faults.
     connector.currentPowerKW = 0.0;
-    connector.lastErrorCode = lastErrorCode ?? 'Power_Loss';
+    connector.lastErrorCode =
+      lastErrorCode ?? (targetStatus === 'Offline' ? 'Comms_Loss' : 'Power_Loss');
     connector.lastErrorTimestamp = new Date().toISOString();
   } else {
     connector.currentPowerKW = 0.0;
@@ -90,6 +93,7 @@ export async function toggleConnectorStatus({ chargerId, connectorId, targetStat
   fleetEvents.emit('change', {
     snapshot: fleetState,
     event: {
+      kind: 'STATUS_CHANGE',
       chargerId,
       connectorId: connector.connectorId,
       targetStatus,
@@ -97,6 +101,44 @@ export async function toggleConnectorStatus({ chargerId, connectorId, targetStat
     },
   });
 
+  return fleetState;
+}
+
+/**
+ * Continuous degradation pipeline (UOW-08 Task 8.1): apply one tick of
+ * time-series telemetry to many connectors at once, then emit a single
+ * TELEMETRY_TICK change so the SSE broadcaster pushes one snapshot per tick.
+ */
+export async function applyTelemetryBatch(updates) {
+  await initFleetState();
+
+  const applied = [];
+  for (const update of updates) {
+    const station = fleetState.stations.find((s) => s.chargerId === update.chargerId);
+    const connector = station?.connectors.find(
+      (c) => c.connectorId === Number(update.connectorId)
+    );
+    if (!connector) continue;
+
+    connector.telemetry = {
+      voltageV: update.voltageV,
+      currentA: update.currentA,
+      temperatureC: update.temperatureC,
+      updatedAt: update.tickAt,
+    };
+    if (connector.status === 'Charging') {
+      connector.currentPowerKW = update.powerKW;
+    }
+    applied.push({ chargerId: update.chargerId, connectorId: connector.connectorId });
+  }
+
+  if (applied.length > 0) {
+    fleetState.generatedAt = new Date().toISOString();
+    fleetEvents.emit('change', {
+      snapshot: fleetState,
+      event: { kind: 'TELEMETRY_TICK', connectors: applied },
+    });
+  }
   return fleetState;
 }
 

@@ -21,6 +21,8 @@ import {
   listEvents,
   getEnvironmentStatus,
   initSimulator,
+  startDegradationLoop,
+  getTelemetrySeries,
 } from './services/environmentalSimulator.js';
 import { enrichAlertOnChange, getAlertBriefs, initTriage } from './services/triageService.js';
 import { getRoiAnalytics } from './services/analyticsService.js';
@@ -35,6 +37,7 @@ const OCPP_STATUSES = [
   'SuspendedEVSE',
   'Finishing',
   'Faulted',
+  'Offline',
 ];
 
 const sseClients = new Set();
@@ -217,6 +220,28 @@ app.get('/api/v1/environment/status', (_req, res) => {
   }
 });
 
+// Continuous degradation time-series (UOW-08 Task 8.1): per-connector telemetry
+// ticks persisted by the background pipeline, read here for diagnostic charting.
+app.get('/api/v1/fleet/telemetry-series/:chargerId/:connectorId', (req, res) => {
+  const limit = req.query.limit === undefined ? 120 : Number(req.query.limit);
+  if (!Number.isFinite(limit) || limit <= 0) {
+    return res.status(400).json({ error: 'limit must be a positive number' });
+  }
+  try {
+    res.json({
+      chargerId: req.params.chargerId,
+      connectorId: Number(req.params.connectorId),
+      ticks: getTelemetrySeries({
+        chargerId: req.params.chargerId,
+        connectorId: req.params.connectorId,
+        limit,
+      }),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // --- SMS alert subscriptions --------------------------------------------------
 
 app.get('/api/v1/fleet/subscriptions', (_req, res) => {
@@ -262,28 +287,60 @@ app.get('/api/v1/analytics/roi', (_req, res) => {
 
 // Alert dispatcher: enrich the persistent triage brief first (synchronous, so
 // it is queryable before clients react), then broadcast to SSE clients; on new
-// faults, fan critical alerts out to subscribers.
-onFleetChange(({ snapshot, event }) => {
-  try {
-    enrichAlertOnChange({ snapshot, event });
-  } catch (err) {
-    console.error(`Alert brief enrichment failed: ${err.message}`);
-  }
-
-  const payload = `data: ${JSON.stringify(snapshot)}\n\n`;
-  for (const client of sseClients) {
-    client.write(payload);
-  }
-
-  if (event.targetStatus === 'Faulted') {
-    for (const phoneNumber of alertSubscribers) {
-      sendCriticalAlert(phoneNumber, {
-        chargerId: event.chargerId,
-        fault: event.lastErrorCode ?? 'Faulted',
-      }).catch((err) => console.error(`SMS dispatch to ${phoneNumber} failed: ${err.message}`));
+// faults, fan critical alerts out to subscribers. TELEMETRY_TICK batches from
+// the degradation pipeline broadcast only — they carry no status transition,
+// so brief upsert/delete and SMS fan-out must not fire on them.
+// UOW-08 Task 8.2: the consolidation layer's result rides the stream as a
+// named `alert-update` SSE event carrying occurrenceCount, so the frontend can
+// react visually to repeating/flapping faults. Consolidated repeats (same
+// charger/connector/code) increment in place and suppress the SMS fan-out —
+// only genuinely new or reclassified alerts page subscribers.
+function registerAlertDispatcher() {
+  onFleetChange(({ snapshot, event }) => {
+    let alertUpdate = null;
+    if (event.kind !== 'TELEMETRY_TICK') {
+      try {
+        alertUpdate = enrichAlertOnChange({ snapshot, event });
+      } catch (err) {
+        console.error(`Alert brief enrichment failed: ${err.message}`);
+      }
     }
-  }
-});
+
+    const payload = `data: ${JSON.stringify(snapshot)}\n\n`;
+    for (const client of sseClients) {
+      client.write(payload);
+    }
+
+    if (alertUpdate) {
+      // Task 8.3: correlator upgrades of peer briefs ride the same named
+      // event as ALERT_UPGRADED frames, after the triggering alert's own frame.
+      const frames = [alertUpdate, ...(alertUpdate.upgraded ?? [])];
+      for (const frame of frames) {
+        const alertPayload =
+          `event: alert-update\n` +
+          `data: ${JSON.stringify({
+            action: frame.action,
+            occurrenceCount: frame.alert.occurrenceCount,
+            lastSeenAt: frame.alert.lastSeenAt,
+            alert: frame.alert,
+          })}\n\n`;
+        for (const client of sseClients) {
+          client.write(alertPayload);
+        }
+      }
+    }
+
+    const isThrottledRepeat = alertUpdate?.action === 'ALERT_CONSOLIDATED';
+    if ((event.targetStatus === 'Faulted' || event.targetStatus === 'Offline') && !isThrottledRepeat) {
+      for (const phoneNumber of alertSubscribers) {
+        sendCriticalAlert(phoneNumber, {
+          chargerId: event.chargerId,
+          fault: event.lastErrorCode ?? 'Faulted',
+        }).catch((err) => console.error(`SMS dispatch to ${phoneNumber} failed: ${err.message}`));
+      }
+    }
+  });
+}
 
 // --- Production SPA hosting ----------------------------------------------------
 // NODE_ENV=production always mounts the built frontend (Railway single-service
@@ -326,10 +383,18 @@ await loadSubscribers();
 await initDirectory();
 await initSimulator();
 initTriage(await getFleetStatus());
+// Dispatcher registers only after boot re-hydration: restart re-faults must not
+// inflate occurrence counters or re-page SMS subscribers; initTriage has
+// already reconciled the brief cache without counting (countOccurrence: false).
+registerAlertDispatcher();
+startDegradationLoop();
 
 app.listen(PORT, () => {
   console.log(`obszilla backend listening on port ${PORT}`);
   console.log(`[boot] mode=${process.env.NODE_ENV ?? 'development'} | compression=gzip (SSE stream excluded)`);
+  console.log(
+    '[boot] degradation pipeline: 5s continuous telemetry ticks | thresholds: <200V sag, >85°C | SQLite telemetry_ticks + SSE broadcast'
+  );
   console.log(
     `[boot] SPA hosting: ${
       SPA_HOSTING
