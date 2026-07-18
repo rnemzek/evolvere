@@ -3,18 +3,22 @@ import StationDrawer from './components/StationDrawer.jsx'
 import KPIStats from './components/KPIStats.jsx'
 import ROIPanel from './components/ROIPanel.jsx'
 import AlertTable from './components/AlertTable.jsx'
+import AlertDesk from './components/AlertDesk.jsx'
 import DiagnosticBrief from './components/DiagnosticBrief.jsx'
 import ControlPanel from './components/ControlPanel.jsx'
 import { fetchSessionHistory, fetchAlertBriefs } from './services/fleetApi.js'
 import { deriveAlerts } from './services/alertEngine.js'
 import { useFleetStream } from './hooks/useFleetStream.js'
 
-// The Leaflet map (leaflet + react-leaflet + overlay planes) is the heaviest
-// dependency tree in the app; splitting it keeps the landing bundle lean so
-// telemetry tiles and the Alert Desk render without waiting on map code.
+// The Leaflet map (leaflet + react-leaflet + overlay planes + national cluster
+// markers) is the heaviest dependency tree in the app; splitting it keeps the
+// landing bundle lean so telemetry tiles and the Alert Desk render without
+// waiting on map code. The Financial Matrix ledger splits for the same reason
+// (Task 10.1): neither view is on the landing path, so neither taxes TTI.
 const CommandCenterMap = lazy(() => import('./components/CommandCenterMap.jsx'))
+const FinancialMatrix = lazy(() => import('./components/FinancialMatrix.jsx'))
 
-const VIEWS = ['Map', 'Dashboard']
+const VIEWS = ['Map', 'Dashboard', 'Financials']
 
 // Fills the same flex-1 container the map mounts into — identical fixed
 // dimensions while the chunk resolves, so CLS stays at zero.
@@ -29,10 +33,26 @@ function MapLoadingFallback() {
   )
 }
 
+// Zero-CLS placeholder for the lazy ledger chunk: reserves table-scale height
+// so the Financials view doesn't jump when the chunk resolves.
+function LedgerLoadingFallback() {
+  return (
+    <div
+      className="min-h-64 rounded-xl border border-slate-800 bg-slate-900/70 grid place-items-center"
+      aria-label="Loading financial matrix"
+    >
+      <div className="flex items-center gap-3 text-slate-400">
+        <span className="h-2.5 w-2.5 rounded-full bg-emerald-400 animate-pulse" aria-hidden="true" />
+        <p className="text-sm font-semibold tracking-widest uppercase">Loading financial matrix…</p>
+      </div>
+    </div>
+  )
+}
+
 // A failed chunk fetch (offline, deploy mid-session) must degrade to a retry
 // placeholder — without this boundary the rejection unmounts the whole app,
-// Dashboard included.
-class MapErrorBoundary extends Component {
+// Dashboard included. Shared by every lazy chunk (map, financial ledger).
+class ChunkErrorBoundary extends Component {
   state = { failed: false }
 
   static getDerivedStateFromError() {
@@ -44,7 +64,7 @@ class MapErrorBoundary extends Component {
     return (
       <div className="h-full w-full grid place-items-center bg-slate-950">
         <div className="text-center space-y-3">
-          <p className="text-sm font-semibold text-slate-300">Command map failed to load.</p>
+          <p className="text-sm font-semibold text-slate-300">{this.props.label} failed to load.</p>
           <button
             type="button"
             onClick={() => window.location.reload()}
@@ -102,7 +122,7 @@ function App() {
       <header className="z-[1000] flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-slate-800 bg-slate-900/85 backdrop-blur">
         <div>
           <h1 className="text-sm font-bold tracking-widest text-cyan-400">
-            Nemzilla NOC — ēvolvere FLEET
+            Nemzilla evolvère GRID
           </h1>
           <p className="text-xs text-slate-400">
             {stations.length} stations · Orange County, CA · live
@@ -141,17 +161,26 @@ function App() {
         </div>
       ) : view === 'Map' ? (
         <main className="relative flex-1">
-          <MapErrorBoundary>
+          <ChunkErrorBoundary label="Command map">
             <Suspense fallback={<MapLoadingFallback />}>
               <CommandCenterMap stations={stations} onSelectStation={(s) => setSelectedStationId(s.chargerId)} />
             </Suspense>
-          </MapErrorBoundary>
+          </ChunkErrorBoundary>
           <StationDrawer station={selectedStation} onClose={() => setSelectedStationId(null)} />
+        </main>
+      ) : view === 'Financials' ? (
+        <main className="flex-1 overflow-y-auto p-4">
+          <ChunkErrorBoundary label="Financial matrix">
+            <Suspense fallback={<LedgerLoadingFallback />}>
+              <FinancialMatrix />
+            </Suspense>
+          </ChunkErrorBoundary>
         </main>
       ) : (
         <main className="flex-1 overflow-y-auto p-4 space-y-4">
           <KPIStats stations={stations} transactions={transactions} />
           <ROIPanel stations={stations} />
+          <AlertDesk />
           <div className="grid gap-4 lg:grid-cols-3">
             <div className="lg:col-span-2">
               <AlertTable

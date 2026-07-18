@@ -3,6 +3,7 @@ const LAYER_DEFS = [
   { id: 'grid', label: 'Grid Power', swatch: 'bg-emerald-400' },
   { id: 'network', label: 'Network', swatch: 'bg-sky-400' },
   { id: 'weather', label: 'Weather', swatch: 'bg-indigo-300' },
+  { id: 'national', label: 'National Fleet', swatch: 'bg-teal-300' },
 ]
 
 /**

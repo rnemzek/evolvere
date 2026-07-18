@@ -7,3 +7,4 @@ dist/
 *.log
 backend/src/data/
 /.codex/
+backend/data/

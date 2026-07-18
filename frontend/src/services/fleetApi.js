@@ -68,6 +68,27 @@ export function fetchRoiAnalytics() {
   return getJson('/api/v1/analytics/roi');
 }
 
+// UOW-13 Task 13.1: Alert Desk mount hydration — OPEN incidents from the
+// unified ledger, CRITICAL first, newest activity first.
+export function fetchAlertLedger(limit) {
+  const q = Number.isFinite(limit) ? `?limit=${limit}` : '';
+  return getJson(`/api/v1/alerts/ledger${q}`);
+}
+
+// UOW-09 Task 9.4: tariff-engine profiles ranked netMargin ascending
+// (worst-first truncation via limit — the national ledger holds ~5k rows).
+export function fetchFinancialMatrix(limit = 100) {
+  const q = Number.isFinite(limit) ? `?limit=${limit}` : '';
+  return getJson(`/api/v1/financials/matrix${q}`);
+}
+
+// UOW-09 Task 9.2: viewport-bound national fleet — pre-clustered server-side
+// below zoom 10 so the map never renders thousands of DOM pins.
+export function fetchSpatialClusters({ minLat, maxLat, minLng, maxLng, zoom }) {
+  const params = new URLSearchParams({ minLat, maxLat, minLng, maxLng, zoom });
+  return getJson(`/api/v1/fleet/spatial-cluster?${params}`);
+}
+
 export function subscribeToAlerts(phoneNumber) {
   return postJson('/api/v1/fleet/subscribe', { phoneNumber });
 }

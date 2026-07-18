@@ -1,4 +1,6 @@
-# obszilla — Nemzilla NOC (ēvolvere FLEET) Pre-Pilot Prototype
+# Nemzilla evolvère GRID — Pre-Pilot Prototype
+
+> Final product identity: **evolvère GRID** · deployment target: `grid.nemzilla.net`
 
 EV charger network operations center prototype. Mock-data-driven SPA + API, Railway-ready.
 

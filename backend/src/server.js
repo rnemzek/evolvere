@@ -26,6 +26,11 @@ import {
 } from './services/environmentalSimulator.js';
 import { enrichAlertOnChange, getAlertBriefs, initTriage } from './services/triageService.js';
 import { getRoiAnalytics } from './services/analyticsService.js';
+import { getFinancialMatrix, initTariffEngine } from './services/tariffEngine.js';
+import { initNationalIngestion, getSpatialClusters } from './services/dataIngestionService.js';
+import { ensureAfdcSchema } from './services/afdcSchema.js';
+import { initAfdcIngestion } from './services/afdcIngest.js';
+import { ensureAlertSchema, onIncidentEvent, raiseAlert, clearAlerts, listOpenLedger } from './services/alertManager.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -64,14 +69,22 @@ async function saveSubscribers() {
 }
 
 app.use(cors());
-// Gzip all text/json egress. SSE must be excluded: compression buffers the
-// stream and events would never flush to connected dashboards.
+// Gzip all text/json egress (static assets, lazy SPA chunks, API JSON). SSE
+// must be excluded: compression buffers the stream and events would never
+// flush to connected dashboards. Task 10.3 hardening: the filter now checks
+// the outbound Content-Type header as well as the route path and request
+// Accept header, so any future event-stream route is bypassed automatically.
+function isEventStream(req, res) {
+  return (
+    req.path === '/api/v1/fleet/stream' ||
+    req.headers.accept === 'text/event-stream' ||
+    String(res.getHeader('Content-Type') ?? '').includes('text/event-stream')
+  );
+}
+
 app.use(
   compression({
-    filter: (req, res) =>
-      req.headers.accept === 'text/event-stream' || req.path === '/api/v1/fleet/stream'
-        ? false
-        : compression.filter(req, res),
+    filter: (req, res) => (isEventStream(req, res) ? false : compression.filter(req, res)),
   })
 );
 app.use(express.json());
@@ -125,6 +138,30 @@ app.get('/api/v1/fleet/stream', async (req, res) => {
     clearInterval(keepAlive);
     sseClients.delete(res);
   });
+});
+
+// UOW-12 Task 12.2: unified-ledger fault injection vector (simulator hooks and
+// demo drivers raise through here; dedupe + SSE fan-out happen in the service).
+app.post('/api/v1/internal/raise-alert', (req, res) => {
+  const { stationId, type, severity, message } = req.body ?? {};
+  try {
+    res.json(raiseAlert({ stationId, type, severity, message }));
+  } catch (err) {
+    res.status(err instanceof TypeError ? 400 : 500).json({ error: err.message });
+  }
+});
+
+// UOW-12 Task 12.3: healthy-signal vector — auto-closes the station's OPEN
+// incidents (optionally narrowed to one alert_type) and fans INCIDENT_RESOLVED
+// frames down the SSE bridge.
+app.post('/api/v1/internal/clear-alerts', (req, res) => {
+  const { stationId, type } = req.body ?? {};
+  try {
+    const resolved = clearAlerts({ stationId, type: type ?? null });
+    res.json({ resolvedCount: resolved.length, resolved });
+  } catch (err) {
+    res.status(err instanceof TypeError ? 400 : 500).json({ error: err.message });
+  }
 });
 
 // --- Demo state driver --------------------------------------------------------
@@ -276,10 +313,59 @@ app.get('/api/v1/alerts/briefs', (_req, res) => {
   }
 });
 
+// UOW-13 Task 13.1: Alert Desk hydration read — OPEN incidents only, CRITICAL
+// first then latest activity, riding the idx_alerts_open_ledger partial index
+// (the (station_id, status) index can't serve a station-agnostic status scan).
+app.get('/api/v1/alerts/ledger', (req, res) => {
+  const limit = req.query.limit === undefined ? undefined : Number(req.query.limit);
+  if (limit !== undefined && (!Number.isFinite(limit) || limit <= 0)) {
+    return res.status(400).json({ error: 'limit must be a positive number' });
+  }
+  try {
+    const alerts = listOpenLedger(limit === undefined ? {} : { limit });
+    res.json({ count: alerts.length, alerts });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ROI & Operational Analytics aggregator (UOW-06 Task 6.6).
 app.get('/api/v1/analytics/roi', (_req, res) => {
   try {
     res.json(getRoiAnalytics());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 'Earning vs. Burning' financial matrix (UOW-09 Task 9.3): tariff-engine
+// profiles sorted netMargin ascending — deepest cash burners first. ?limit=
+// truncates worst-first now that the national ledger holds ~5k stations.
+app.get('/api/v1/financials/matrix', (req, res) => {
+  const limit = req.query.limit === undefined ? undefined : Number(req.query.limit);
+  if (limit !== undefined && (!Number.isFinite(limit) || limit <= 0)) {
+    return res.status(400).json({ error: 'limit must be a positive number' });
+  }
+  try {
+    res.json(getFinancialMatrix({ limit }));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// National viewport stream (UOW-09 Task 9.2): bounding-box filter + server-side
+// grid-bucket clustering below zoom 10 so Leaflet holds its 60 FPS budget.
+app.get('/api/v1/fleet/spatial-cluster', (req, res) => {
+  const bounds = {};
+  for (const key of ['minLat', 'maxLat', 'minLng', 'maxLng', 'zoom']) {
+    const value = Number(req.query[key]);
+    if (!Number.isFinite(value)) {
+      return res.status(400).json({ error: `${key} is required and must be numeric` });
+    }
+    bounds[key] = value;
+  }
+  try {
+    res.json(getSpatialClusters(bounds));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -383,6 +469,29 @@ await loadSubscribers();
 await initDirectory();
 await initSimulator();
 initTriage(await getFleetStatus());
+const afdcSchema = ensureAfdcSchema();
+console.log(
+  `[boot] AFDC registry schema ready | spatial index: ${afdcSchema.rtree ? 'R*Tree + sync triggers' : 'B-Tree fallback'}`
+);
+const afdcBoot = await initAfdcIngestion();
+console.log(
+  `[boot] AFDC registry: ${afdcBoot.stations ?? afdcBoot.ingested} stations | source: ${afdcBoot.source} | verified: ${afdcBoot.verified}`
+);
+ensureAlertSchema();
+console.log('[boot] alert ledger schema ready | unified incident store: alerts + idx_alerts_station_status');
+// Task 12.2 SSE bridge: every post-commit ledger event (opened / consolidated /
+// resolved) rides the live stream as a named `incident-update` frame, so the
+// Alert Desk can bump row counts and event_count chips without a refresh.
+onIncidentEvent(({ action, alert }) => {
+  const frame =
+    `event: incident-update\n` +
+    `data: ${JSON.stringify({ action, eventCount: alert.eventCount, lastSeenAt: alert.lastSeenAt, alert })}\n\n`;
+  for (const client of sseClients) {
+    client.write(frame);
+  }
+});
+await initNationalIngestion();
+initTariffEngine();
 // Dispatcher registers only after boot re-hydration: restart re-faults must not
 // inflate occurrence counters or re-page SMS subscribers; initTriage has
 // already reconciled the brief cache without counting (countOccurrence: false).

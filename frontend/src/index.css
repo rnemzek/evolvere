@@ -107,6 +107,29 @@
   }
 }
 
+/* National fleet plane: server-aggregated cluster count bubbles (Task 9.2). */
+.national-cluster {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 9999px;
+  border: 2px solid rgba(45, 212, 191, 0.9);
+  background: rgba(2, 6, 23, 0.85);
+  color: #5eead4;
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  box-shadow: 0 0 10px 2px rgba(45, 212, 191, 0.35);
+  cursor: pointer;
+}
+
+.national-cluster.sagging {
+  border-color: rgba(245, 158, 11, 0.9);
+  color: #fcd34d;
+  box-shadow: 0 0 10px 2px rgba(245, 158, 11, 0.35);
+}
+
 /* Grid Power overlay: substation zone pulses while a GRID_FAILURE is active. */
 .grid-zone-outage {
   animation: grid-outage-pulse 1.4s ease-in-out infinite;
@@ -124,10 +147,46 @@
   }
 }
 
+/* --- Alert Desk (UOW-13) -------------------------------------------------- */
+/* Row entry rides the compositor: opacity only — never height/top — so
+   incident arrivals inside the fixed-height desk cost zero layout or paint
+   work on the Leaflet plane. */
+.alert-desk-row-enter {
+  animation: alert-row-in 240ms ease-out both;
+}
+
+@keyframes alert-row-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* INCIDENT_RESOLVED fade: the row dims in place — the static opacity carries
+   the end state, so reduced-motion users land on the same dimmed row with the
+   animation stripped. Removal from the list is Task 13.3's cleanup pass. */
+.alert-desk-row-resolving {
+  opacity: 0.4;
+  animation: alert-row-resolve 600ms ease-out both;
+}
+
+@keyframes alert-row-resolve {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0.4;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .charger-marker .dot,
   .charger-marker .ring,
-  .grid-zone-outage {
+  .grid-zone-outage,
+  .alert-desk-row-enter,
+  .alert-desk-row-resolving {
     animation: none;
   }
 }

@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { MapContainer, TileLayer, Marker, Tooltip, Circle, CircleMarker } from 'react-leaflet'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { MapContainer, TileLayer, Marker, Tooltip, Circle, CircleMarker, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 // Leaflet CSS ships with this lazy chunk, not the landing bundle (Task 7.1).
 import 'leaflet/dist/leaflet.css'
@@ -7,6 +7,7 @@ import { isStationFaulted } from '../services/stationHealth.js'
 import { STATUS_STYLES } from './StationDrawer'
 import MapLayerControls from './MapLayerControls.jsx'
 import { useEnvironment } from '../hooks/useEnvironment.js'
+import { fetchSpatialClusters } from '../services/fleetApi.js'
 
 const OC_CENTER = [33.74, -117.82]
 
@@ -188,6 +189,129 @@ function WeatherLayer({ environment }) {
   ))
 }
 
+const formatCount = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n))
+
+// UOW-11 label alignment: `activeGridSag` stays wire-compatible but now flags
+// real AFDC availability, so user-facing text names the actual station state
+// (P = planned build-out, T = temporarily unavailable).
+const stationStateLabel = (station) => {
+  if (!station.activeGridSag) return ''
+  if (station.statusCode === 'P') return ' · PLANNED SITE'
+  if (station.statusCode === 'T') return ' · STATION OFFLINE'
+  return ' · STATION DOWN'
+}
+
+function clusterIcon(cluster) {
+  const sagging = cluster.sagCount > 0
+  // Screen readers get the full telemetry sentence; the visual bubble shows
+  // only the compact count. Enter/Space activate via Leaflet marker keyboard
+  // support on the focusable wrapper.
+  // UOW-11: the wire field keeps its `sagCount` name, but at AFDC semantics it
+  // counts stations whose real-world status is not open (planned or offline).
+  const srLabel = sagging
+    ? `Cluster of ${cluster.count} national stations, ${cluster.sagCount} offline or planned — activate to zoom in`
+    : `Cluster of ${cluster.count} national stations, all open — activate to zoom in`
+  return L.divIcon({
+    className: '',
+    html: `<div class="national-cluster${sagging ? ' sagging' : ''}" role="img" aria-label="${srLabel}">${formatCount(cluster.count)}</div>`,
+    iconSize: [40, 40],
+    iconAnchor: [20, 20],
+  })
+}
+
+/**
+ * National fleet plane (UOW-09 Task 9.2). The Leaflet viewport drives
+ * /api/v1/fleet/spatial-cluster on every moveend/zoomend: wide zooms render
+ * server-aggregated count bubbles, street zooms render individual pins — the
+ * DOM never holds thousands of markers, keeping pans at 60 FPS. A sequence
+ * guard drops stale responses that resolve after a newer pan.
+ */
+function NationalFleetLayer({ onViewportTotal }) {
+  const [payload, setPayload] = useState(null)
+  const seqRef = useRef(0)
+
+  const refresh = useCallback(
+    (mapInstance) => {
+      const bounds = mapInstance.getBounds()
+      const seq = ++seqRef.current
+      fetchSpatialClusters({
+        minLat: bounds.getSouth(),
+        maxLat: bounds.getNorth(),
+        minLng: bounds.getWest(),
+        maxLng: bounds.getEast(),
+        zoom: mapInstance.getZoom(),
+      })
+        .then((data) => {
+          if (seq !== seqRef.current) return
+          setPayload(data)
+          onViewportTotal?.(data.total)
+        })
+        .catch(() => {})
+    },
+    [onViewportTotal]
+  )
+
+  const map = useMapEvents({
+    moveend: () => refresh(map),
+    zoomend: () => refresh(map),
+  })
+
+  useEffect(() => {
+    refresh(map)
+  }, [map, refresh])
+
+  if (!payload) return null
+
+  if (payload.mode === 'clusters') {
+    return payload.clusters.map((cluster) => (
+      <Marker
+        key={cluster.key}
+        position={[cluster.latitude, cluster.longitude]}
+        icon={clusterIcon(cluster)}
+        keyboard={true}
+        alt={`${cluster.count} station cluster`}
+        eventHandlers={{
+          click: () =>
+            map.setView([cluster.latitude, cluster.longitude], Math.min(map.getZoom() + 2, 18)),
+        }}
+      >
+        <Tooltip direction="top" offset={[0, -14]} opacity={1} className="charger-tooltip">
+          <div className="space-y-1">
+            <p className="text-sm font-semibold text-slate-100">{cluster.count} national stations</p>
+            <p className="font-mono text-xs text-slate-400">
+              {cluster.sagCount > 0 ? `${cluster.sagCount} offline/planned · ` : ''}tap to zoom
+            </p>
+          </div>
+        </Tooltip>
+      </Marker>
+    ))
+  }
+
+  return payload.stations.map((station) => (
+    <CircleMarker
+      key={station.stationId}
+      center={[station.latitude, station.longitude]}
+      radius={5}
+      pathOptions={{
+        color: station.activeGridSag ? '#f59e0b' : '#2dd4bf',
+        weight: 1.5,
+        fillColor: station.activeGridSag ? '#f59e0b' : '#2dd4bf',
+        fillOpacity: 0.5,
+      }}
+    >
+      <Tooltip direction="top" opacity={1} className="charger-tooltip">
+        <div className="space-y-1">
+          <p className="text-sm font-semibold text-slate-100">{station.name}</p>
+          <p className="font-mono text-xs text-slate-400">
+            {station.stationId} · {station.state ?? '—'}
+            {stationStateLabel(station)}
+          </p>
+        </div>
+      </Tooltip>
+    </CircleMarker>
+  ))
+}
+
 function CommandCenterMap({ stations, onSelectStation }) {
   const { topology, directory, environment } = useEnvironment(stations)
   const [layers, setLayers] = useState({
@@ -195,7 +319,9 @@ function CommandCenterMap({ stations, onSelectStation }) {
     grid: true,
     network: true,
     weather: true,
+    national: true,
   })
+  const [nationalTotal, setNationalTotal] = useState(null)
 
   const gridDown = (environment?.gridNodes ?? []).filter((n) => n.powerStatus === 'OUTAGE').length
   const ispDown = (environment?.ispCarriers ?? []).filter((c) => c.networkStatus === 'DOWN').length
@@ -206,6 +332,7 @@ function CommandCenterMap({ stations, onSelectStation }) {
     grid: gridDown ? `${gridDown} outage` : null,
     network: ispDown ? `${ispDown} down` : null,
     weather: weatherActive ? `${weatherActive} active` : null,
+    national: layers.national && nationalTotal != null ? `${formatCount(nationalTotal)} in view` : null,
   }
 
   return (
@@ -217,6 +344,7 @@ function CommandCenterMap({ stations, onSelectStation }) {
         className="h-full w-full"
       >
         <TileLayer url={DARK_MATTER_URL} attribution={DARK_MATTER_ATTRIBUTION} />
+        {layers.national && <NationalFleetLayer onViewportTotal={setNationalTotal} />}
         {layers.grid && <GridPowerLayer topology={topology} environment={environment} />}
         {layers.weather && <WeatherLayer environment={environment} />}
         {layers.network && <NetworkLayer directory={directory} environment={environment} />}
