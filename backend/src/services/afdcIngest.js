@@ -273,6 +273,39 @@ const VENUES = [
 const ACCESS_HOURS = ['24 hours daily', 'Dawn to dusk', 'MON-FRI 7am-9pm', '6am-10pm daily'];
 const STREETS = ['Main St', 'Oak Ave', 'Center Dr', 'Market St', 'Industrial Pkwy', 'Harbor Blvd'];
 
+// UOW-14 Task 14.3: topological clipping gate. The gaussian anchor scatter is
+// direction-blind — a uniform 360° variance around a coastal metro bleeds
+// points into open water (81 Wilmington rows reached the Atlantic, 419 LA rows
+// the Pacific before this gate). Each predicate returns true only for on-land
+// candidates; rejected draws are regenerated from the same deterministic
+// stream, so the seed stays reproducible.
+//
+// - Wilmington, NC: land ends at the intracoastal waterway (lng -77.82) —
+//   everything east is Atlantic; below lat 34.02 the Cape Fear mouth opens
+//   into open sea.
+// - Los Angeles, CA: land lies strictly northeast of the natural Pacific
+//   shoreline vector from Point Dume (34.00, -118.80) to Newport Beach
+//   (33.60, -117.93); the sign of the 2-D cross product against that vector
+//   decides land vs water (and correctly discards Catalina Island draws).
+const LA_SHORE = { lat: 34.0, lng: -118.8, dLat: -0.4, dLng: 0.87 };
+const COASTAL_CLIPS = {
+  'Wilmington,NC': (lat, lng) => lng <= -77.82 && lat >= 34.02,
+  'Los Angeles,CA': (lat, lng) =>
+    LA_SHORE.dLng * (lat - LA_SHORE.lat) - LA_SHORE.dLat * (lng - LA_SHORE.lng) >= 0,
+};
+
+// Rejection-sample the anchor scatter: redraw until the candidate clears the
+// clip predicate, pinning to the anchor itself (always on land) in the
+// vanishingly unlikely case 40 consecutive draws all land in water.
+function jitterAnchor(rand, lat, lng, sigma, clip) {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const cLat = lat + gauss(rand) * sigma;
+    const cLng = lng + gauss(rand) * sigma * 1.2;
+    if (!clip || clip(cLat, cLng)) return { lat: cLat, lng: cLng };
+  }
+  return { lat, lng };
+}
+
 // Same deterministic PRNG family as the corridor/tariff seeders.
 function seededRng(seed) {
   let h = (seed >>> 0) || 1;
@@ -334,12 +367,12 @@ function* generateSeedRecords(target) {
       ? metroCount - emitted // last metro absorbs rounding remainder
       : Math.round((weight / metroWeightTotal) * metroCount);
     const sigma = 0.06 + Math.sqrt(weight) * 0.05;
+    const clip = COASTAL_CLIPS[`${city},${state}`];
     for (let i = 0; i < allocation; i += 1) {
       const rand = seededRng(afdcId);
       yield buildSeedRecord(afdcId, {
         city, state,
-        lat: lat + gauss(rand) * sigma,
-        lng: lng + gauss(rand) * sigma * 1.2,
+        ...jitterAnchor(rand, lat, lng, sigma, clip),
       }, rand);
       afdcId += 1;
       emitted += 1;
@@ -423,12 +456,31 @@ function verifyRegistry(rtreeActive) {
   // viewport (PO reference ~34.24, -78.01) must never report empty again —
   // real AFDC data has stations there, and the seed now anchors the metro.
   const coastalBox = queryStationsInBounds({ minLat: 34.0, maxLat: 34.5, minLng: -78.3, maxLng: -77.7 });
+  // UOW-14 Task 14.3: ocean-leak gate — the COASTAL_CLIPS predicates re-run as
+  // SQL over the ingested rows, so a regression in the clipping gate fails
+  // verification. City-scoped on purpose: real AFDC barrier-island stations
+  // (Wrightsville Beach, Carolina Beach) carry their own city names and stay
+  // exempt, while anything filed under the clipped anchor cities must be on
+  // the landward side of its shoreline predicate.
+  const { leaks: ncLeaks } = database
+    .prepare(`SELECT COUNT(*) AS leaks FROM afdc_stations
+              WHERE city = 'Wilmington' AND state = 'NC'
+                AND (longitude > -77.82 OR latitude < 34.02)`)
+    .get();
+  const { leaks: laLeaks } = database
+    .prepare(`SELECT COUNT(*) AS leaks FROM afdc_stations
+              WHERE city = 'Los Angeles' AND state = 'CA'
+                AND 0.87 * (latitude - 34.0) + 0.4 * (longitude + 118.8) < 0`)
+    .get();
+  const oceanLeaks = ncLeaks + laLeaks;
   return {
     stations,
     rtreeInSync: rtreeRows === stations,
     spatialSpotCheck: laBox.length,
     coastalSpotCheck: coastalBox.length,
-    verified: stations > 0 && rtreeRows === stations && laBox.length > 0 && coastalBox.length > 0,
+    oceanLeaks,
+    verified: stations > 0 && rtreeRows === stations && laBox.length > 0
+      && coastalBox.length > 0 && oceanLeaks === 0,
   };
 }
 
@@ -522,6 +574,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   console.log(`  upserted rows:     ${result.ingested} (${result.batches} × ${BATCH_SIZE}-row transactions)`);
   console.log(`  registry rows:     ${result.stations} | rtree in sync: ${result.rtreeInSync}`);
   console.log(`  LA bbox spot-check: ${result.spatialSpotCheck} stations`);
+  console.log(`  coastal spot-check: ${result.coastalSpotCheck} stations | ocean leaks: ${result.oceanLeaks}`);
   console.log(`  peak heap:         ${result.peakHeapMB} MB | duration: ${result.durationMs} ms`);
   console.log(`  VERIFIED: ${result.verified}`);
 }
