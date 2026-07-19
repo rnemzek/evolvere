@@ -3,6 +3,7 @@ import { gzipSync, gunzipSync } from 'node:zlib';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getDb } from './chargerDirectory.js';
+import { correlateOutages } from './outageCorrelator.js';
 
 // UOW-16 Task 16.1: real-world power-grid outage ingestion. The service keeps
 // a county-scoped "current outage picture" (EIA-861 / ORNL EAGLE-I shape:
@@ -386,7 +387,18 @@ export async function syncGridOutages() {
     else skipped += 1;
   }
   const { counties, syncedAt } = replaceOutages(rows, source);
-  return { source, counties, skipped, syncedAt, ...verifyOutages(), durationMs: Date.now() - startedAt };
+  // UOW-16 Task 16.3: every fresh picture immediately re-correlates against
+  // the AFDC registry and grid-node topology, feeding county-scoped
+  // EXTERNAL_GRID_FAILURE incidents into the alert ledger (and auto-resolving
+  // recovered counties). A correlation failure must never poison the sync
+  // itself — the outage table is already committed.
+  let correlation = null;
+  try {
+    correlation = correlateOutages();
+  } catch (err) {
+    console.error(`Grid outages: correlation sweep failed: ${err.message}`);
+  }
+  return { source, counties, skipped, syncedAt, correlation, ...verifyOutages(), durationMs: Date.now() - startedAt };
 }
 
 /** Read API: current picture, CRITICAL first then darkest share of customers. */

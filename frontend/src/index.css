@@ -205,6 +205,81 @@ body,
   animation: pulse-ring 1.6s ease-out infinite;
 }
 
+/* --- Diagnostic Reference Pin (UOW-16 Task 16.3) -------------------------- */
+
+/* Neon-cyan crosshair target: ring + axis bars + center dot, sized to the
+   44px icon box with the anchor dead-center on the sampled coordinate. */
+.diagnostic-pin {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  touch-action: manipulation;
+  pointer-events: auto;
+}
+
+.diagnostic-pin .ring {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 28px;
+  height: 28px;
+  border-radius: 9999px;
+  border: 2px solid #22d3ee; /* cyan-400 */
+  box-shadow:
+    0 0 8px 2px rgba(34, 211, 238, 0.8),
+    inset 0 0 6px rgba(34, 211, 238, 0.5);
+}
+
+.diagnostic-pin .cross-v,
+.diagnostic-pin .cross-h {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  background: #22d3ee;
+  box-shadow: 0 0 6px 1px rgba(34, 211, 238, 0.9);
+}
+
+.diagnostic-pin .cross-v {
+  width: 2px;
+  height: 44px;
+}
+
+.diagnostic-pin .cross-h {
+  width: 44px;
+  height: 2px;
+}
+
+.diagnostic-pin .dot {
+  position: relative;
+  z-index: 2;
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: #ecfeff; /* cyan-50 core for exact-center legibility */
+  box-shadow: 0 0 8px 3px rgba(34, 211, 238, 1);
+}
+
+/* Screenshot-crisp coordinate readout: the permanent tooltip drops the
+   backdrop blur (blur softens glyph edges in OS screen captures) for a
+   near-opaque zinc-950 slab with a hard cyan frame — numerals stay razor
+   sharp over any tile underneath. */
+.leaflet-tooltip.diagnostic-tooltip {
+  background: rgb(9 9 11 / 0.98); /* zinc-950 */
+  backdrop-filter: none;
+  border: 1.5px solid #22d3ee;
+  box-shadow:
+    0 0 14px rgba(34, 211, 238, 0.35),
+    0 8px 24px rgba(0, 0, 0, 0.6);
+  font-variant-numeric: tabular-nums;
+}
+
+.leaflet-tooltip.diagnostic-tooltip.leaflet-tooltip-top::before {
+  border-top-color: #22d3ee;
+}
+
 /* Grid Power overlay: substation zone pulses while a GRID_FAILURE is active. */
 .grid-zone-outage {
   animation: grid-outage-pulse 1.4s ease-in-out infinite;

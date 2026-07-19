@@ -47,6 +47,36 @@ const touchPinRenderer = L.canvas({ padding: 0.5, tolerance: 14 })
 // no-op there; bubbling stays off so a pin tap can't fall through to the map.
 const tapOpenTooltip = { click: (e) => e.target.openTooltip() }
 
+// UOW-16 Task 16.3 (Diagnostic Reference Pin): neon-cyan crosshair target for
+// screenshot-based UAT coordinate verification. One icon instance — the pin is
+// a singleton, so the divIcon never varies.
+const diagnosticPinIcon = L.divIcon({
+  className: '',
+  html:
+    '<div class="diagnostic-pin" role="img" aria-label="UAT diagnostic reference pin">' +
+    '<span class="ring"></span><span class="cross-v"></span><span class="cross-h"></span><span class="dot"></span></div>',
+  iconSize: [44, 44],
+  iconAnchor: [22, 22],
+})
+
+/**
+ * Map-level interaction listener for the diagnostic pin. Leaflet fires
+ * `contextmenu` for desktop right-clicks natively; on touch screens the
+ * MapContainer's `tapHold` gate synthesizes the same `contextmenu` event from
+ * a long-press (Leaflet 1.9's pointer-event replacement for the removed Tap
+ * handler), so one listener covers both input worlds. preventDefault stops
+ * the OS/browser context menu from opening over the map.
+ */
+function DiagnosticPinController({ onDrop }) {
+  useMapEvents({
+    contextmenu: (e) => {
+      e.originalEvent?.preventDefault()
+      onDrop({ lat: e.latlng.lat, lng: e.latlng.lng })
+    },
+  })
+  return null
+}
+
 const DARK_MATTER_URL =
   'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
 const DARK_MATTER_ATTRIBUTION =
@@ -525,6 +555,9 @@ function CommandCenterMap({ stations, onSelectStation }) {
   // UOW-15 Task 15.4: mobile (<768px) collapses both overlay panels into a
   // slide-in side tray so the touch surface stays clear; md+ ignores this.
   const [trayOpen, setTrayOpen] = useState(false)
+  // UOW-16 Task 16.3: Diagnostic Reference Pin — right-click / long-press
+  // drops (or moves) the singleton UAT crosshair; null = no pin on the map.
+  const [diagnosticPin, setDiagnosticPin] = useState(null)
 
   const gridDown = (environment?.gridNodes ?? []).filter((n) => n.powerStatus === 'OUTAGE').length
   const ispDown = (environment?.ispCarriers ?? []).filter((c) => c.networkStatus === 'DOWN').length
@@ -551,6 +584,11 @@ function CommandCenterMap({ stations, onSelectStation }) {
         // it is Leaflet's default, but the navigator's hint chip advertises it,
         // so pin the behavior rather than rely on the default staying true.
         boxZoom={true}
+        // UOW-16 Task 16.3: long-press → synthesized contextmenu on touch
+        // screens, so the diagnostic pin drops from a thumb hold exactly as
+        // from a desktop right-click. (Leaflet enables this by default only on
+        // mobile Safari; pinning it true covers Android Chrome too.)
+        tapHold={true}
         // UOW-16 Task 16.2: attribution moves out of the default bottom-right
         // corner — it was stacking into the same Leaflet corner container as
         // the zoom bar, crowding the +/- strip on compact viewports.
@@ -577,6 +615,32 @@ function CommandCenterMap({ stations, onSelectStation }) {
               <StationTooltip station={station} />
             </Marker>
           ))}
+        {/* UOW-16 Task 16.3: Diagnostic Reference Pin — singleton crosshair
+            with a permanent (never-fading) coordinate readout for
+            screenshot-safe UAT verification. Tapping the pin itself clears it. */}
+        <DiagnosticPinController onDrop={setDiagnosticPin} />
+        {diagnosticPin && (
+          <Marker
+            position={[diagnosticPin.lat, diagnosticPin.lng]}
+            icon={diagnosticPinIcon}
+            keyboard={true}
+            alt="UAT diagnostic reference pin"
+            eventHandlers={{ click: () => setDiagnosticPin(null) }}
+          >
+            <Tooltip
+              permanent
+              direction="top"
+              offset={[0, -20]}
+              opacity={1}
+              className="charger-tooltip diagnostic-tooltip"
+            >
+              <p className="font-mono text-xs font-bold tracking-tight text-cyan-300">
+                UAT TARGET REFERENCE // LAT: {diagnosticPin.lat.toFixed(6)}, LNG:{' '}
+                {diagnosticPin.lng.toFixed(6)}
+              </p>
+            </Tooltip>
+          </Marker>
+        )}
       </MapContainer>
       {/* UOW-15 Task 15.4 / UOW-16 Task 16.2: floating Home — resets the
           viewport to the canonical national overview. Re-aligned to the zoom

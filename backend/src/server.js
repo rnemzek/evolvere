@@ -542,6 +542,13 @@ console.log(
   `[boot] grid outages: ${outageBoot.counties} counties | source: ${outageBoot.source} | ` +
   `${outageBoot.critical} CRITICAL / ${outageBoot.warning} WARNING / ${outageBoot.info} INFO | verified: ${outageBoot.verified}`
 );
+if (outageBoot.correlation) {
+  console.log(
+    `[boot] outage correlation: ${outageBoot.correlation.ledgerCounties} ledger counties | ` +
+    `${outageBoot.correlation.opened} opened / ${outageBoot.correlation.consolidated} consolidated / ` +
+    `${outageBoot.correlation.resolved} auto-resolved | ${outageBoot.correlation.stationsInImpact} AFDC stations in impact radii`
+  );
+}
 await initNationalIngestion();
 initTariffEngine();
 // Dispatcher registers only after boot re-hydration: restart re-faults must not
