@@ -448,12 +448,14 @@ function buildSeedRecord(afdcId, anchor, rand) {
 // Wiggly on 112 Village Rd NE, so Smithfield's moves to the discrete 199996).
 // The dictionary binds label → coordinate → network → status explicitly, one
 // record per line of the PO's surveyed sheet:
-//   AFDC-199996  Leland Supercharger Hub (Smithfield's)  34.2185, -78.0145
+//   AFDC-199996  Leland Supercharger Hub (Smithfield's)  34.217440, -78.018444
 //   AFDC-199997  Piggly Wiggly Infrastructure Node       34.2421, -77.9984
 //   AFDC-199999  The Villages at Brunswick Forest        34.1954, -78.0231
-// 15.6 (UAT final offset): the Smithfield's beacon sat on the "Leland" map
-// label at the US-74 junction; the true Olde Regent Way shopping plaza is
-// ~1.2 mi southwest — 34.2185/-78.0145 is the land-verified parking lot.
+// 15.6 (UAT offset): the Smithfield's beacon sat on the "Leland" map label at
+// the US-74 junction and was shifted to the Olde Regent Way plaza estimate.
+// 16.4 (crosshair fix): the Diagnostic Reference Pin measured the true
+// commercial retail plaza parking lot at exactly 34.217440/-78.018444 —
+// dictionary snapped to the surveyed crosshair signature, seed v11.
 // These records are yielded verbatim ahead of the scatter loops: they never
 // enter jitter(), gauss(), or any other randomized noise path, and the
 // GROUND_TRUTH_SECTOR exclusion below bars procedural records from the sector
@@ -468,8 +470,8 @@ const GROUND_TRUTH_DICTIONARY = [
     city: 'Leland',
     state: 'NC',
     zip: '28451',
-    latitude: 34.2185,
-    longitude: -78.0145,
+    latitude: 34.21744,
+    longitude: -78.018444,
     fuel_type_code: 'ELEC',
     access_days_time: '24 hours daily',
     ev_network: 'Tesla',
@@ -877,7 +879,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   console.log(`  registry rows:     ${result.stations} | rtree in sync: ${result.rtreeInSync}`);
   console.log(`  LA bbox spot-check: ${result.spatialSpotCheck} stations`);
   console.log(`  coastal spot-check: ${result.coastalSpotCheck} stations | ocean leaks: ${result.oceanLeaks}`);
-  console.log(`  Leland dictionary: ${result.dictionaryBound ? `all ${GROUND_TRUTH_DICTIONARY.length} bindings exact (199996 Smithfield's 34.2185,-78.0145 · 199997 Piggly Wiggly 34.2421,-77.9984 · 199999 Brunswick Forest 34.1954,-78.0231)` : 'absent (live registry)'} | sector strays: ${result.sectorStrays}`);
+  console.log(`  Leland dictionary: ${result.dictionaryBound ? `all ${GROUND_TRUTH_DICTIONARY.length} bindings exact (199996 Smithfield's 34.217440,-78.018444 · 199997 Piggly Wiggly 34.2421,-77.9984 · 199999 Brunswick Forest 34.1954,-78.0231)` : 'absent (live registry)'} | sector strays: ${result.sectorStrays}`);
   console.log(`  peak heap:         ${result.peakHeapMB} MB | duration: ${result.durationMs} ms`);
   console.log(`  VERIFIED: ${result.verified}`);
 }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { AttributionControl, MapContainer, TileLayer, Marker, Tooltip, Circle, CircleMarker, ZoomControl, useMapEvents } from 'react-leaflet'
+import { AttributionControl, MapContainer, TileLayer, Marker, Tooltip, Circle, CircleMarker, Rectangle, ZoomControl, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 // Leaflet CSS ships with this lazy chunk, not the landing bundle (Task 7.1).
 import 'leaflet/dist/leaflet.css'
@@ -7,7 +7,8 @@ import { isStationFaulted } from '../services/stationHealth.js'
 import { STATUS_STYLES } from './StationDrawer'
 import MapLayerControls from './MapLayerControls.jsx'
 import { useEnvironment } from '../hooks/useEnvironment.js'
-import { fetchSpatialClusters, fetchRegistryLocate } from '../services/fleetApi.js'
+import { fetchSpatialClusters, fetchRegistryLocate, fetchGridOutages } from '../services/fleetApi.js'
+import { subscribeStream } from '../services/streamHub.js'
 
 const OC_CENTER = [33.74, -117.82]
 
@@ -226,6 +227,104 @@ function NetworkLayer({ directory, environment }) {
       </CircleMarker>
     )
   })
+}
+
+// UOW-16 Task 16.4: severity → wash styling for the Grid Outage plane.
+// Low-profile translucent fills so tiles, pins, and clusters stay legible
+// through the territory shading: dark crimson for CRITICAL, soft amber for
+// WARNING, and a barely-there dashed slate for INFO-grade flickers.
+const OUTAGE_WASHES = {
+  CRITICAL: { color: '#b91c1c', weight: 1.5, fillColor: '#7f1d1d', fillOpacity: 0.28 },
+  WARNING: { color: '#d97706', weight: 1.2, fillColor: '#f59e0b', fillOpacity: 0.14 },
+  INFO: { color: '#64748b', weight: 1, dashArray: '4 4', fillColor: '#64748b', fillOpacity: 0.07 },
+}
+
+// County impact footprint → Leaflet bounds. Mirrors the backend correlator's
+// impactBounds() math exactly, so the wash the operator sees is the same
+// region the EXTERNAL_GRID_FAILURE station counts were computed from.
+const KM_PER_DEG_LAT = 111.32
+function outageBounds(outage) {
+  const dLat = outage.radiusKm / KM_PER_DEG_LAT
+  const dLng =
+    outage.radiusKm /
+    (KM_PER_DEG_LAT * Math.max(0.2, Math.cos((outage.latitude * Math.PI) / 180)))
+  return [
+    [outage.latitude - dLat, outage.longitude - dLng],
+    [outage.latitude + dLat, outage.longitude + dLng],
+  ]
+}
+
+/**
+ * UOW-16 Task 16.4: Grid Outage overlay plane. Mounts with the Grid Power
+ * layer toggle, hydrates from /api/v1/grid/outages, and renders each affected
+ * county's impact footprint as a severity-washed rectangle. Live refresh rides
+ * the existing SSE multiplexer: county incidents reach the ledger as
+ * GRID-<fips> rows, so every incident-update frame (opened / consolidated /
+ * resolved) re-syncs the plane — storm-coalesced through a single trailing
+ * timer so a burst of frames costs one fetch, and the periodic backend sync
+ * cadence needs no additional client polling.
+ */
+function GridOutageLayer() {
+  const [outages, setOutages] = useState([])
+
+  useEffect(() => {
+    let cancelled = false
+    let timer = null
+    const refresh = () => {
+      fetchGridOutages()
+        .then((data) => {
+          if (!cancelled) setOutages(data.outages)
+        })
+        .catch(() => {})
+    }
+    refresh()
+    const unsubscribe = subscribeStream('incident-update', () => {
+      if (timer) return
+      timer = setTimeout(() => {
+        timer = null
+        refresh()
+      }, 400)
+    })
+    return () => {
+      cancelled = true
+      unsubscribe()
+      if (timer) clearTimeout(timer)
+    }
+  }, [])
+
+  return outages.map((outage) => (
+    <Rectangle
+      key={outage.fips}
+      bounds={outageBounds(outage)}
+      pathOptions={OUTAGE_WASHES[outage.severity] ?? OUTAGE_WASHES.INFO}
+      eventHandlers={tapOpenTooltip}
+      bubblingMouseEvents={false}
+    >
+      <Tooltip direction="top" opacity={1} className="charger-tooltip">
+        <div className="space-y-1">
+          <p className="text-sm font-semibold text-slate-100">
+            {outage.countyName} County, {outage.state}
+          </p>
+          <p className="font-mono text-xs text-zinc-300">
+            FIPS {outage.fips} · {outage.customersOut.toLocaleString()} of{' '}
+            {outage.customersTracked.toLocaleString()} customers dark (
+            {(outage.pctOut * 100).toFixed(1)}%)
+          </p>
+          <p
+            className={`text-xs font-bold ${
+              outage.severity === 'CRITICAL'
+                ? 'text-red-400'
+                : outage.severity === 'WARNING'
+                  ? 'text-amber-400'
+                  : 'text-slate-400'
+            }`}
+          >
+            GRID OUTAGE · {outage.severity}
+          </p>
+        </div>
+      </Tooltip>
+    </Rectangle>
+  ))
 }
 
 /** Weather plane: bounding circles matching each active zone's broadcast radius. */
@@ -602,6 +701,9 @@ function CommandCenterMap({ stations, onSelectStation }) {
         <TileLayer url={DARK_MATTER_URL} attribution={DARK_MATTER_ATTRIBUTION} />
         {layers.national && <NationalFleetLayer onViewportTotal={setNationalTotal} />}
         {layers.grid && <GridPowerLayer topology={topology} environment={environment} />}
+        {/* Task 16.4: the Grid Power toggle now also drives the national
+            county-outage wash plane alongside the local substation circles. */}
+        {layers.grid && <GridOutageLayer />}
         {layers.weather && <WeatherLayer environment={environment} />}
         {layers.network && <NetworkLayer directory={directory} environment={environment} />}
         {layers.fleet &&

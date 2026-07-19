@@ -100,6 +100,12 @@ export function fetchRegistryLocate(q) {
   return getJson(`/api/v1/registry/locate?q=${encodeURIComponent(q)}`);
 }
 
+// UOW-16 Task 16.4: current county-scoped power-grid outage picture (tiered
+// live/snapshot/simulation source) driving the map's Grid Outage wash plane.
+export function fetchGridOutages() {
+  return getJson('/api/v1/grid/outages');
+}
+
 export function subscribeToAlerts(phoneNumber) {
   return postJson('/api/v1/fleet/subscribe', { phoneNumber });
 }

@@ -45,7 +45,12 @@ let migrated = null;
 // v9 (UOW-15 Task 15.6): Smithfield's beacon shifted ~1.2 mi southwest off
 // the "Leland" map label to the land-verified Olde Regent Way plaza parking
 // lot (34.2185/-78.0145); v9 purges the v8 rows and re-synthesizes clean.
-export const AFDC_SEED_VERSION = 9;
+// v11 (UOW-16 Task 16.4): the Diagnostic Reference Pin crosshair surveyed the
+// true Smithfield's retail plaza parking lot at exactly 34.217440/-78.018444 —
+// AFDC-199996 snaps to the measured signature. Version jumps straight past
+// v10 per the PO's numbering; the gate only tests inequality, so any cached
+// pre-v11 registry (and its tier-2 snapshot) is shredded on boot regardless.
+export const AFDC_SEED_VERSION = 11;
 
 export function ensureAfdcSchema() {
   if (migrated) return migrated;
