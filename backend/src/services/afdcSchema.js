@@ -42,7 +42,10 @@ let migrated = null;
 // v8 (UOW-15 Task 15.5): sequential mapping slip corrected — real-world
 // AFDC-199997 is the Piggly Wiggly (112 Village Rd NE); Smithfield's moves to
 // the discrete 199996. v8 scrubs the cross-wired label rows atomically.
-export const AFDC_SEED_VERSION = 8;
+// v9 (UOW-15 Task 15.6): Smithfield's beacon shifted ~1.2 mi southwest off
+// the "Leland" map label to the land-verified Olde Regent Way plaza parking
+// lot (34.2185/-78.0145); v9 purges the v8 rows and re-synthesizes clean.
+export const AFDC_SEED_VERSION = 9;
 
 export function ensureAfdcSchema() {
   if (migrated) return migrated;
