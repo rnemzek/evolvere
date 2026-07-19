@@ -29,7 +29,7 @@ import { getRoiAnalytics } from './services/analyticsService.js';
 import { getFinancialMatrix, initTariffEngine } from './services/tariffEngine.js';
 import { initNationalIngestion, getSpatialClusters } from './services/dataIngestionService.js';
 import { ensureAfdcSchema } from './services/afdcSchema.js';
-import { initAfdcIngestion, getRegistryProfile } from './services/afdcIngest.js';
+import { initAfdcIngestion, getRegistryProfile, locateRegistry } from './services/afdcIngest.js';
 import { ensureAlertSchema, onIncidentEvent, raiseAlert, clearAlerts, listOpenLedger } from './services/alertManager.js';
 
 const app = express();
@@ -358,6 +358,21 @@ app.get('/api/v1/financials/matrix', (req, res) => {
 app.get('/api/v1/registry/profile', (_req, res) => {
   try {
     res.json(getRegistryProfile());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// UOW-15 Task 15.2: Go To Location — resolves a city/state/zip query against
+// the local AFDC registry and returns the matched set's bounding box for a
+// client-side viewport snap. No external geocoding dependency.
+app.get('/api/v1/registry/locate', (req, res) => {
+  const q = String(req.query.q ?? '').trim();
+  if (!q) return res.status(400).json({ error: 'q is required' });
+  try {
+    const found = locateRegistry(q);
+    if (!found) return res.status(404).json({ error: `No registry match for "${q}"` });
+    res.json(found);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

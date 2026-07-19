@@ -1,4 +1,4 @@
-import { createReadStream, createWriteStream, existsSync, mkdirSync } from 'node:fs';
+import { createReadStream, createWriteStream, existsSync, mkdirSync, rmSync } from 'node:fs';
 import { once } from 'node:events';
 import { Readable } from 'node:stream';
 import { finished } from 'node:stream/promises';
@@ -10,7 +10,7 @@ import { parser } from 'stream-json';
 import { pick } from 'stream-json/filters/pick.js';
 import { streamArray } from 'stream-json/streamers/stream-array.js';
 import { getDb } from './chargerDirectory.js';
-import { ensureAfdcSchema, queryStationsInBounds } from './afdcSchema.js';
+import { ensureAfdcSchema, queryStationsInBounds, AFDC_SEED_VERSION } from './afdcSchema.js';
 import { CORRIDORS } from './dataIngestionService.js';
 
 // UOW-11 Task 11.2: bulk NREL AFDC ingestion pipeline. The registry payload
@@ -437,11 +437,32 @@ function buildSeedRecord(afdcId, anchor, rand) {
   };
 }
 
-// UOW-14 Task 14.4: PO-verified ground-truth pins — validation anchors placed
-// at exact surveyed coordinates with ZERO jitter, so acceptance testing has a
-// fixed landmark to sight against. Ids sit below the generated range
-// (200001+) so scatter allocation can never collide with them.
+// UOW-14 Task 14.4 / UOW-15 Task 15.1: PO-verified ground-truth pins —
+// validation anchors placed at exact surveyed coordinates with ZERO jitter,
+// so acceptance testing has fixed landmarks to sight against. These records
+// are yielded verbatim ahead of the scatter loops: they never enter jitter(),
+// gauss(), or any other randomized noise path — the Leland sector's anchors
+// are bit-exact by construction, not by rejection sampling. Ids sit below the
+// generated range (200001+) so scatter allocation can never collide with them.
 const GROUND_TRUTH_PINS = [
+  {
+    id: 199998,
+    station_name: 'Piggly Wiggly Infrastructure Node - Leland',
+    street_address: '112 Village Rd NE',
+    city: 'Leland',
+    state: 'NC',
+    zip: '28451',
+    latitude: 34.2421,
+    longitude: -77.9984,
+    fuel_type_code: 'ELEC',
+    access_days_time: '24 hours daily',
+    ev_network: 'ChargePoint Network',
+    status_code: 'E',
+    ev_dc_fast_num: null,
+    ev_level2_evse_num: 4,
+    ev_connector_types: ['J1772'],
+    updated_at: '2026-07-19',
+  },
   {
     id: 199999,
     station_name: "Smithfield's BBQ Plaza Supercharger - Leland",
@@ -578,19 +599,23 @@ function verifyRegistry(rtreeActive) {
     if (!onLand(row.lat, row.lng)) oceanLeaks += 1;
   }
   // Reported but NOT gating `verified`: a live NREL ingest legitimately lacks
-  // the synthetic demo pin, and must still verify clean.
-  const { n: pinCount } = database
+  // the synthetic demo pins, and must still verify clean. UOW-15 Task 15.1:
+  // every ground-truth pin must sit at its exact surveyed coordinate — one
+  // check derived from the same GROUND_TRUTH_PINS array the generator yields,
+  // so the anchor list and its verification can never drift apart.
+  const pinStmt = database
     .prepare(`SELECT COUNT(*) AS n FROM afdc_stations
-              WHERE afdc_id = 199999
-                AND ABS(latitude - 34.2372) < 1e-6 AND ABS(longitude + 78.0055) < 1e-6`)
-    .get();
+              WHERE afdc_id = ? AND ABS(latitude - ?) < 1e-6 AND ABS(longitude - ?) < 1e-6`);
+  const pinsAnchored = GROUND_TRUTH_PINS.every(
+    (pin) => pinStmt.get(pin.id, pin.latitude, pin.longitude).n === 1
+  );
   return {
     stations,
     rtreeInSync: rtreeRows === stations,
     spatialSpotCheck: laBox.length,
     coastalSpotCheck: coastalBox.length,
     oceanLeaks,
-    groundTruthPin: pinCount === 1,
+    groundTruthPins: pinsAnchored,
     verified: stations > 0 && rtreeRows === stations && laBox.length > 0
       && coastalBox.length > 0 && oceanLeaks === 0,
   };
@@ -621,15 +646,114 @@ export function getRegistryProfile() {
   };
 }
 
+// UOW-15 Task 15.2: full-name → USPS code so operators can type either form
+// into the Go To Location search.
+const STATE_CODES = {
+  alabama: 'AL', alaska: 'AK', arizona: 'AZ', arkansas: 'AR', california: 'CA',
+  colorado: 'CO', connecticut: 'CT', delaware: 'DE', florida: 'FL', georgia: 'GA',
+  hawaii: 'HI', idaho: 'ID', illinois: 'IL', indiana: 'IN', iowa: 'IA',
+  kansas: 'KS', kentucky: 'KY', louisiana: 'LA', maine: 'ME', maryland: 'MD',
+  massachusetts: 'MA', michigan: 'MI', minnesota: 'MN', mississippi: 'MS', missouri: 'MO',
+  montana: 'MT', nebraska: 'NE', nevada: 'NV', 'new hampshire': 'NH', 'new jersey': 'NJ',
+  'new mexico': 'NM', 'new york': 'NY', 'north carolina': 'NC', 'north dakota': 'ND',
+  ohio: 'OH', oklahoma: 'OK', oregon: 'OR', pennsylvania: 'PA', 'rhode island': 'RI',
+  'south carolina': 'SC', 'south dakota': 'SD', tennessee: 'TN', texas: 'TX', utah: 'UT',
+  vermont: 'VT', virginia: 'VA', washington: 'WA', 'west virginia': 'WV',
+  wisconsin: 'WI', wyoming: 'WY', 'district of columbia': 'DC',
+};
+
+const LOCATE_AGG = `COUNT(*) AS matches,
+                    MIN(latitude) AS minLat, MAX(latitude) AS maxLat,
+                    MIN(longitude) AS minLng, MAX(longitude) AS maxLng`;
+
+/**
+ * UOW-15 Task 15.2: Go To Location resolver. Geocodes entirely against the
+ * local registry — the 75k-station table already spans every US city/state/zip
+ * we can render, so no external geocoding API is needed. Returns the matched
+ * station set's bounding box for a viewport fitBounds, or null.
+ *
+ * Resolution order: 5-digit zip → state (USPS code or full name) →
+ * "City, ST" / "City ST" pair → bare city name. Bare city names group by
+ * state and snap to the state holding the most matching stations, so
+ * "Wilmington" centers on Wilmington NC's dense cluster instead of a
+ * meaningless NC↔DE↔CA-spanning box.
+ */
+export function locateRegistry(query) {
+  ensureAfdcSchema();
+  const q = String(query ?? '').trim().replace(/\s+/g, ' ');
+  if (!q) return null;
+  const database = getDb();
+  const hit = (label, row) =>
+    row?.matches > 0
+      ? {
+          label,
+          matches: row.matches,
+          bounds: { minLat: row.minLat, maxLat: row.maxLat, minLng: row.minLng, maxLng: row.maxLng },
+        }
+      : null;
+
+  if (/^\d{5}$/.test(q)) {
+    // Grouped by densest state for the same reason as bare city names: real
+    // AFDC zips live in exactly one state (grouping is then a no-op), but the
+    // synthesized seed assigns random zips, and an ungrouped MIN/MAX would
+    // span a meaningless coast-to-coast box across those collisions.
+    const row = database
+      .prepare(`SELECT state, ${LOCATE_AGG} FROM afdc_stations WHERE zip = ?
+                GROUP BY state ORDER BY matches DESC, state LIMIT 1`)
+      .get(q);
+    return row ? hit(`ZIP ${q} (${row.state})`, row) : null;
+  }
+
+  const stateCode = /^[a-z]{2}$/i.test(q) ? q.toUpperCase() : STATE_CODES[q.toLowerCase()];
+  if (stateCode) {
+    const found = hit(stateCode, database
+      .prepare(`SELECT ${LOCATE_AGG} FROM afdc_stations WHERE state = ?`)
+      .get(stateCode));
+    if (found) return found;
+  }
+
+  const pair = q.match(/^(.+?)(?:,| ) ?([a-z]{2})$/i);
+  if (pair) {
+    const found = hit(`${pair[1]}, ${pair[2].toUpperCase()}`, database
+      .prepare(`SELECT ${LOCATE_AGG} FROM afdc_stations WHERE city LIKE ? AND state = ?`)
+      .get(pair[1], pair[2].toUpperCase()));
+    if (found) return found;
+  }
+
+  for (const pattern of [q, `${q}%`]) {
+    const row = database
+      .prepare(`SELECT city, state, ${LOCATE_AGG} FROM afdc_stations
+                WHERE city LIKE ? GROUP BY state ORDER BY matches DESC LIMIT 1`)
+      .get(pattern);
+    const found = row ? hit(`${row.city}, ${row.state}`, row) : null;
+    if (found) return found;
+  }
+  return null;
+}
+
 /**
  * Runs the tiered pipeline: live AFDC fetch → local snapshot → synthesized
  * seed. Returns ingest stats merged with post-ingest verification.
  */
 export async function ingestAfdcRegistry({ target = AFDC_TARGET } = {}) {
-  const { rtree } = ensureAfdcSchema();
+  const { rtree, wiped } = ensureAfdcSchema();
   const apiKey = process.env.NREL_API_KEY ?? 'DEMO_KEY';
   const startedAt = Date.now();
   let stats = null;
+
+  // UOW-15 Task 15.1: the AFDC_SEED_VERSION destructive gate dropped the
+  // registry tables, so the cached snapshot on disk holds the SAME stale
+  // geometry the wipe exists to shred — purge it too, or the tier-2 fallback
+  // would faithfully re-ingest every pre-v6 ocean/lake row and boot without
+  // the current ground-truth anchors.
+  if (wiped) {
+    for (const stale of [SNAPSHOT_RAW, SNAPSHOT_GZ]) {
+      if (existsSync(stale)) {
+        rmSync(stale);
+        console.warn(`AFDC ingestion: purged stale seed snapshot ${path.basename(stale)} (seed geometry v${AFDC_SEED_VERSION} rebuild)`);
+      }
+    }
+  }
 
   if (apiKey === 'DEMO_KEY') {
     console.warn('AFDC ingestion: no NREL_API_KEY set — using DEMO_KEY (throttling expected, fallback armed)');
@@ -687,7 +811,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   console.log(`  registry rows:     ${result.stations} | rtree in sync: ${result.rtreeInSync}`);
   console.log(`  LA bbox spot-check: ${result.spatialSpotCheck} stations`);
   console.log(`  coastal spot-check: ${result.coastalSpotCheck} stations | ocean leaks: ${result.oceanLeaks}`);
-  console.log(`  Leland ground-truth pin: ${result.groundTruthPin ? 'anchored at 34.2372, -78.0055' : 'absent (live registry)'}`);
+  console.log(`  Leland ground-truth pins: ${result.groundTruthPins ? `all ${GROUND_TRUTH_PINS.length} anchored exactly (Supercharger Hub 34.2372,-78.0055 · Piggly Wiggly 34.2421,-77.9984)` : 'absent (live registry)'}`);
   console.log(`  peak heap:         ${result.peakHeapMB} MB | duration: ${result.durationMs} ms`);
   console.log(`  VERIFIED: ${result.verified}`);
 }

@@ -30,7 +30,10 @@ let migrated = null;
 // A mismatch forces the destructive wipe below on next boot, so a deployed
 // container (Railway included) shreds every cached stale row and re-ingests
 // with the current topology — exactly once, not on every reboot.
-export const AFDC_SEED_VERSION = 5;
+// v6 (UOW-15 Task 15.1): dual Leland ground-truth anchors (Supercharger Hub +
+// Piggly Wiggly node) land in the seed; any cached pre-v6 registry — including
+// lingering ocean/lake rows from pre-14.4 geometry — is dropped on boot.
+export const AFDC_SEED_VERSION = 6;
 
 export function ensureAfdcSchema() {
   if (migrated) return migrated;
@@ -41,7 +44,9 @@ export function ensureAfdcSchema() {
   const versionRow = database
     .prepare("SELECT value FROM afdc_meta WHERE key = 'seed_version'")
     .get();
+  let wiped = false;
   if (!versionRow || Number(versionRow.value) !== AFDC_SEED_VERSION) {
+    wiped = true;
     console.warn(
       `AFDC schema: seed geometry v${versionRow?.value ?? 'none'} → v${AFDC_SEED_VERSION} — dropping stale registry for full re-ingest`
     );
@@ -131,7 +136,10 @@ export function ensureAfdcSchema() {
     `);
   }
 
-  migrated = { rtree };
+  // `wiped` rides the memoized result so the ingest orchestrator (which may
+  // run long after another module triggered this migration) can tell that the
+  // registry was force-dropped and must also invalidate its snapshot cache.
+  migrated = { rtree, wiped };
   return migrated;
 }
 

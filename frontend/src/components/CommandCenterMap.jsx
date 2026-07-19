@@ -7,9 +7,19 @@ import { isStationFaulted } from '../services/stationHealth.js'
 import { STATUS_STYLES } from './StationDrawer'
 import MapLayerControls from './MapLayerControls.jsx'
 import { useEnvironment } from '../hooks/useEnvironment.js'
-import { fetchSpatialClusters } from '../services/fleetApi.js'
+import { fetchSpatialClusters, fetchRegistryLocate } from '../services/fleetApi.js'
 
 const OC_CENTER = [33.74, -117.82]
+
+// UOW-15 Task 15.2: macro US sector presets — [[south, west], [north, east]]
+// viewport bounds the operator can teleport to instantly (no network hop).
+const REGION_PRESETS = [
+  { id: 'ne', label: 'NE', name: 'Northeast', bounds: [[40.4, -80.6], [47.6, -66.7]] },
+  { id: 'midatl', label: 'MID-ATL', name: 'Mid-Atlantic', bounds: [[36.5, -83.7], [41.5, -73.8]] },
+  { id: 'se', label: 'SE', name: 'Southeast', bounds: [[24.4, -92.6], [36.7, -75.3]] },
+  { id: 'mw', label: 'MW', name: 'Midwest', bounds: [[36.0, -104.1], [49.4, -80.4]] },
+  { id: 'west', label: 'WEST', name: 'West Coast', bounds: [[32.3, -124.8], [49.1, -114.0]] },
+]
 
 const CARRIER_COLORS = {
   'ISP-VERIZON-CELLULAR': '#fb7185',
@@ -322,6 +332,112 @@ function NationalFleetLayer({ onViewportTotal }) {
   ))
 }
 
+/**
+ * UOW-15 Task 15.2: Map Navigation Suite. Absolutely positioned over the map
+ * canvas (top-left, mirroring MapLayerControls top-right), zero layout shift.
+ * - Go To Location: free-text city / state / zip resolved by
+ *   /api/v1/registry/locate against the AFDC registry itself — the result's
+ *   bounding box flies the viewport straight onto the matched station set.
+ * - Regional Presets: one-tap teleport to the five macro US sectors.
+ * - Box Zoom signal: Leaflet's native Shift+drag box zoom is enabled on the
+ *   MapContainer; the hint chip advertises it to operators.
+ */
+function MapNavigator({ map }) {
+  const [query, setQuery] = useState('')
+  const [status, setStatus] = useState(null)
+  const [busy, setBusy] = useState(false)
+
+  const flyTo = useCallback(
+    (bounds) => {
+      map?.flyToBounds(bounds, { padding: [48, 48], maxZoom: 13, duration: 0.9 })
+    },
+    [map]
+  )
+
+  const goToLocation = async (event) => {
+    event.preventDefault()
+    const q = query.trim()
+    if (!q || !map || busy) return
+    setBusy(true)
+    try {
+      const hit = await fetchRegistryLocate(q)
+      flyTo([
+        [hit.bounds.minLat, hit.bounds.minLng],
+        [hit.bounds.maxLat, hit.bounds.maxLng],
+      ])
+      setStatus({ kind: 'ok', text: `${hit.label} · ${formatCount(hit.matches)} stations` })
+    } catch {
+      setStatus({ kind: 'err', text: `No registry match for “${q}”` })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <section
+      aria-label="Map Navigation"
+      className="absolute top-3 left-3 z-[1000] w-60 rounded-xl border border-slate-700 bg-slate-900/90 backdrop-blur p-2 space-y-2 shadow-lg shadow-black/40"
+    >
+      <h2 className="px-1 pt-1 text-[10px] font-semibold uppercase tracking-widest text-slate-200">
+        Navigation
+      </h2>
+      <form role="search" aria-label="Go To Location" onSubmit={goToLocation} className="flex gap-1.5">
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="City, state, or ZIP…"
+          aria-label="Go to city, state, or ZIP code"
+          className="min-w-0 flex-1 min-h-11 rounded-lg border border-slate-700 bg-slate-950/80 px-2.5 text-sm text-slate-100 placeholder:text-slate-500 focus:border-cyan-600 focus:outline-none"
+        />
+        <button
+          type="submit"
+          disabled={busy}
+          className="min-h-11 shrink-0 rounded-lg border border-cyan-600 bg-cyan-500/10 px-3 text-sm font-semibold text-cyan-300 transition-colors hover:bg-cyan-500/20 disabled:opacity-50"
+        >
+          Go
+        </button>
+      </form>
+      <p
+        aria-live="polite"
+        className={`min-h-4 px-1 text-[11px] font-mono leading-tight ${
+          status ? (status.kind === 'ok' ? 'text-emerald-400' : 'text-amber-400') : 'text-transparent'
+        }`}
+      >
+        {status?.text ?? '·'}
+      </p>
+      <div role="group" aria-label="Regional Presets" className="flex flex-wrap gap-1">
+        {REGION_PRESETS.map((region) => (
+          <button
+            key={region.id}
+            type="button"
+            title={`Jump to ${region.name}`}
+            onClick={() => {
+              flyTo(region.bounds)
+              setStatus({ kind: 'ok', text: `Sector · ${region.name}` })
+            }}
+            className="min-h-11 flex-1 basis-16 rounded-lg border border-slate-700 bg-transparent px-1.5 text-[11px] font-bold tracking-wider text-slate-200 transition-colors hover:border-cyan-600 hover:bg-cyan-500/10 hover:text-cyan-300"
+          >
+            {region.label}
+          </button>
+        ))}
+      </div>
+      <p
+        title="Hold Shift, then click and drag a rectangle on the map to zoom the viewport directly to it"
+        className="flex items-center gap-1.5 px-1 pb-0.5 text-[10px] uppercase tracking-wider text-slate-500"
+      >
+        <svg aria-hidden="true" viewBox="0 0 16 16" className="h-3 w-3 fill-none stroke-current">
+          <rect x="2.5" y="4.5" width="11" height="8" rx="1" strokeWidth="1.5" strokeDasharray="2.5 2" />
+        </svg>
+        <kbd className="rounded border border-slate-700 bg-slate-950/80 px-1 font-mono text-[9px] text-slate-400">
+          Shift
+        </kbd>
+        + drag · box zoom
+      </p>
+    </section>
+  )
+}
+
 function CommandCenterMap({ stations, onSelectStation }) {
   const { topology, directory, environment } = useEnvironment(stations)
   const [layers, setLayers] = useState({
@@ -332,6 +448,9 @@ function CommandCenterMap({ stations, onSelectStation }) {
     national: true,
   })
   const [nationalTotal, setNationalTotal] = useState(null)
+  // Leaflet Map instance for the navigation suite — react-leaflet v5 exposes
+  // it via MapContainer ref once the map mounts.
+  const [mapInstance, setMapInstance] = useState(null)
 
   const gridDown = (environment?.gridNodes ?? []).filter((n) => n.powerStatus === 'OUTAGE').length
   const ispDown = (environment?.ispCarriers ?? []).filter((c) => c.networkStatus === 'DOWN').length
@@ -348,9 +467,14 @@ function CommandCenterMap({ stations, onSelectStation }) {
   return (
     <>
       <MapContainer
+        ref={setMapInstance}
         center={OC_CENTER}
         zoom={11}
         zoomControl={false}
+        // UOW-15 Task 15.2: box zoom (Shift + click-drag) explicitly enabled —
+        // it is Leaflet's default, but the navigator's hint chip advertises it,
+        // so pin the behavior rather than rely on the default staying true.
+        boxZoom={true}
         className="h-full w-full"
       >
         <TileLayer url={DARK_MATTER_URL} attribution={DARK_MATTER_ATTRIBUTION} />
@@ -370,6 +494,7 @@ function CommandCenterMap({ stations, onSelectStation }) {
             </Marker>
           ))}
       </MapContainer>
+      <MapNavigator map={mapInstance} />
       <MapLayerControls
         layers={layers}
         badges={badges}

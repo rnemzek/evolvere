@@ -94,6 +94,12 @@ export function fetchRegistryProfile() {
   return getJson('/api/v1/registry/profile');
 }
 
+// UOW-15 Task 15.2: Go To Location — resolves city/state/zip queries against
+// the AFDC registry, returning a viewport bounding box (404 → thrown Error).
+export function fetchRegistryLocate(q) {
+  return getJson(`/api/v1/registry/locate?q=${encodeURIComponent(q)}`);
+}
+
 export function subscribeToAlerts(phoneNumber) {
   return postJson('/api/v1/fleet/subscribe', { phoneNumber });
 }
