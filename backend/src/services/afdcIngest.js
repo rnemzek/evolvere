@@ -246,7 +246,8 @@ const METROS = [
   ['Pittsburgh', 'PA', 40.44, -79.99, 1.5], ['Nashville', 'TN', 36.16, -86.78, 1.5],
   ['Memphis', 'TN', 35.15, -90.05, 0.8], ['Louisville', 'KY', 38.25, -85.76, 0.8],
   ['Atlanta', 'GA', 33.75, -84.39, 3], ['Charlotte', 'NC', 35.23, -80.84, 1.5],
-  ['Raleigh', 'NC', 35.78, -78.64, 1.5], ['Richmond', 'VA', 37.54, -77.44, 1],
+  ['Raleigh', 'NC', 35.78, -78.64, 1.5], ['Wilmington', 'NC', 34.22, -77.94, 0.7],
+  ['Richmond', 'VA', 37.54, -77.44, 1],
   ['Washington', 'DC', 38.9, -77.04, 3], ['Baltimore', 'MD', 39.29, -76.61, 1.5],
   ['Philadelphia', 'PA', 39.95, -75.17, 2.5], ['Newark', 'NJ', 40.74, -74.17, 1.5],
   ['New York', 'NY', 40.71, -74.01, 5], ['Boston', 'MA', 42.36, -71.06, 3],
@@ -410,7 +411,7 @@ export function countAfdcStations() {
   return getDb().prepare('SELECT COUNT(*) AS n FROM afdc_stations').get().n;
 }
 
-/** Post-ingest verification: base/R*Tree parity plus a spatial spot-check. */
+/** Post-ingest verification: base/R*Tree parity plus spatial spot-checks. */
 function verifyRegistry(rtreeActive) {
   const database = getDb();
   const stations = countAfdcStations();
@@ -418,11 +419,41 @@ function verifyRegistry(rtreeActive) {
     ? database.prepare('SELECT COUNT(*) AS n FROM afdc_geo').get().n
     : stations;
   const laBox = queryStationsInBounds({ minLat: 33.5, maxLat: 34.5, minLng: -118.8, maxLng: -117.5 });
+  // UOW-14 Task 14.1 regression guard: the Leland/Wilmington NC close-up
+  // viewport (PO reference ~34.24, -78.01) must never report empty again —
+  // real AFDC data has stations there, and the seed now anchors the metro.
+  const coastalBox = queryStationsInBounds({ minLat: 34.0, maxLat: 34.5, minLng: -78.3, maxLng: -77.7 });
   return {
     stations,
     rtreeInSync: rtreeRows === stations,
     spatialSpotCheck: laBox.length,
-    verified: stations > 0 && rtreeRows === stations && laBox.length > 0,
+    coastalSpotCheck: coastalBox.length,
+    verified: stations > 0 && rtreeRows === stations && laBox.length > 0 && coastalBox.length > 0,
+  };
+}
+
+/**
+ * UOW-14 Task 14.1: live database profile for the SPA header — replaces the
+ * hardcoded "Orange County" locality string with what the registry actually
+ * holds. Planned ('P') sites are broken out so no consumer folds them into
+ * fault/attention math.
+ */
+export function getRegistryProfile() {
+  ensureAfdcSchema();
+  const row = getDb()
+    .prepare(`SELECT COUNT(*) AS stations,
+                     COUNT(DISTINCT state) AS states,
+                     SUM(CASE WHEN status_code = 'P' THEN 1 ELSE 0 END) AS planned,
+                     SUM(CASE WHEN status_code IS NOT NULL
+                              AND status_code NOT IN ('E', 'P') THEN 1 ELSE 0 END) AS offline
+              FROM afdc_stations`)
+    .get();
+  return {
+    stations: row.stations,
+    states: row.states,
+    planned: row.planned ?? 0,
+    offline: row.offline ?? 0,
+    coverage: row.states > 1 ? 'US National Registry' : 'Regional Registry',
   };
 }
 

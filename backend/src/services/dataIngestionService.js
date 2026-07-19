@@ -303,25 +303,38 @@ const CELLS_PER_TILE_AXIS = 4;
  * are non-negative. In stations mode the ≤ STATION_MODE_CAP page is capped by
  * SQL LIMIT, with the true total from an rtree-only COUNT.
  *
- * `sagCount`/`activeGridSag` keep their wire names for the frontend but now
- * flag real AFDC availability: any station whose status_code is not 'E'
- * (open) — i.e. planned or temporarily unavailable.
+ * `sagCount`/`activeGridSag` keep their wire names for the frontend and flag
+ * genuinely unavailable stations only (status_code 'T' or unknown non-open).
+ * Planned build-outs ('P') ride separately as `isPlanned`/`plannedCount` so
+ * the UI can render neutral blueprint indicators instead of faults.
  */
 export function getSpatialClusters({ minLat, maxLat, minLng, maxLng, zoom }) {
   const database = getDb();
   const { join, where, params } = boundsQueryParts({ minLat, maxLat, minLng, maxLng });
-  const ATTENTION = "CASE WHEN s.status_code IS NOT NULL AND s.status_code <> 'E' THEN 1 ELSE 0 END";
+  // UOW-14 Task 14.1: AFDC 'P' (planned build-out) is a blueprint, not a
+  // fault — only genuinely unavailable stations (T, or unknown non-open
+  // codes) feed attention counters. Planned sites travel as their own count.
+  const ATTENTION = "CASE WHEN s.status_code IS NOT NULL AND s.status_code NOT IN ('E', 'P') THEN 1 ELSE 0 END";
+  const PLANNED = "CASE WHEN s.status_code = 'P' THEN 1 ELSE 0 END";
 
   if (zoom >= CLUSTER_ZOOM_THRESHOLD) {
     const { total } = database
       .prepare(`SELECT COUNT(*) AS total FROM afdc_stations s ${join} WHERE ${where}`)
       .get(...params);
+    // UOW-14 Task 14.1: when the in-bounds population exceeds the cap, an
+    // unordered LIMIT returns an arbitrary (insert-order) page that can leave
+    // whole corners of the viewport empty. Ranking by squared distance to the
+    // viewport center keeps the page anchored on what the operator is looking
+    // at — the close-up regional slice always survives the national cap.
+    const centerLat = (minLat + maxLat) / 2;
+    const centerLng = (minLng + maxLng) / 2;
     const rows = database
       .prepare(`SELECT s.afdc_id, s.station_name, s.state, s.ev_network, s.status_code,
                        s.latitude, s.longitude
                 FROM afdc_stations s ${join} WHERE ${where}
+                ORDER BY (s.latitude - ?) * (s.latitude - ?) + (s.longitude - ?) * (s.longitude - ?)
                 LIMIT ${STATION_MODE_CAP}`)
-      .all(...params);
+      .all(...params, centerLat, centerLat, centerLng, centerLng);
     return {
       mode: 'stations',
       zoom,
@@ -335,7 +348,8 @@ export function getSpatialClusters({ minLat, maxLat, minLng, maxLng, zoom }) {
         statusCode: r.status_code,
         latitude: r.latitude,
         longitude: r.longitude,
-        activeGridSag: r.status_code != null && r.status_code !== 'E',
+        isPlanned: r.status_code === 'P',
+        activeGridSag: r.status_code != null && r.status_code !== 'E' && r.status_code !== 'P',
       })),
     };
   }
@@ -349,7 +363,8 @@ export function getSpatialClusters({ minLat, maxLat, minLng, maxLng, zoom }) {
                      COUNT(*) AS n,
                      AVG(s.latitude) AS lat,
                      AVG(s.longitude) AS lng,
-                     SUM(${ATTENTION}) AS attention
+                     SUM(${ATTENTION}) AS attention,
+                     SUM(${PLANNED}) AS planned
               FROM afdc_stations s ${join} WHERE ${where}
               GROUP BY ci, cj`)
     .all(cellDeg, cellDeg, ...params);
@@ -365,6 +380,7 @@ export function getSpatialClusters({ minLat, maxLat, minLng, maxLng, zoom }) {
       key: `${r.ci}:${r.cj}`,
       count: r.n,
       sagCount: r.attention,
+      plannedCount: r.planned,
       latitude: Math.round(r.lat * 1e5) / 1e5,
       longitude: Math.round(r.lng * 1e5) / 1e5,
     })),

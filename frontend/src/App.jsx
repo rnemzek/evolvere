@@ -6,7 +6,7 @@ import AlertTable from './components/AlertTable.jsx'
 import AlertDesk from './components/AlertDesk.jsx'
 import DiagnosticBrief from './components/DiagnosticBrief.jsx'
 import ControlPanel from './components/ControlPanel.jsx'
-import { fetchSessionHistory, fetchAlertBriefs } from './services/fleetApi.js'
+import { fetchSessionHistory, fetchAlertBriefs, fetchRegistryProfile } from './services/fleetApi.js'
 import { deriveAlerts } from './services/alertEngine.js'
 import { useFleetStream } from './hooks/useFleetStream.js'
 
@@ -86,6 +86,15 @@ function App() {
   const [selectedStationId, setSelectedStationId] = useState(null)
   const [selectedAlert, setSelectedAlert] = useState(null)
   const [controlPanelOpen, setControlPanelOpen] = useState(false)
+  const [registryProfile, setRegistryProfile] = useState(null)
+
+  // UOW-14 Task 14.1: the header locality line reads the live database
+  // profile instead of a hardcoded "Orange County" asset.
+  useEffect(() => {
+    fetchRegistryProfile()
+      .then(setRegistryProfile)
+      .catch(() => {})
+  }, [])
 
   useEffect(() => {
     fetchSessionHistory()
@@ -125,7 +134,9 @@ function App() {
             Nemzilla evolvère GRID
           </h1>
           <p className="text-xs text-slate-400">
-            {stations.length} stations · Orange County, CA · live
+            {registryProfile
+              ? `${registryProfile.stations.toLocaleString()} stations · ${registryProfile.coverage} · ${registryProfile.states} states · live`
+              : `${stations.length} fleet chargers · live`}
           </p>
         </div>
         <nav aria-label="View switcher" className="flex items-center gap-2">

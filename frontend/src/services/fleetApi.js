@@ -89,6 +89,11 @@ export function fetchSpatialClusters({ minLat, maxLat, minLng, maxLng, zoom }) {
   return getJson(`/api/v1/fleet/spatial-cluster?${params}`);
 }
 
+// UOW-14 Task 14.1: live database profile driving the header locality line.
+export function fetchRegistryProfile() {
+  return getJson('/api/v1/registry/profile');
+}
+
 export function subscribeToAlerts(phoneNumber) {
   return postJson('/api/v1/fleet/subscribe', { phoneNumber });
 }

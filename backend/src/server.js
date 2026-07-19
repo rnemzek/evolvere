@@ -29,7 +29,7 @@ import { getRoiAnalytics } from './services/analyticsService.js';
 import { getFinancialMatrix, initTariffEngine } from './services/tariffEngine.js';
 import { initNationalIngestion, getSpatialClusters } from './services/dataIngestionService.js';
 import { ensureAfdcSchema } from './services/afdcSchema.js';
-import { initAfdcIngestion } from './services/afdcIngest.js';
+import { initAfdcIngestion, getRegistryProfile } from './services/afdcIngest.js';
 import { ensureAlertSchema, onIncidentEvent, raiseAlert, clearAlerts, listOpenLedger } from './services/alertManager.js';
 
 const app = express();
@@ -348,6 +348,16 @@ app.get('/api/v1/financials/matrix', (req, res) => {
   }
   try {
     res.json(getFinancialMatrix({ limit }));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// UOW-14 Task 14.1: live registry profile for the SPA header — station count,
+// state coverage, and the planned/offline breakdown straight from SQLite.
+app.get('/api/v1/registry/profile', (_req, res) => {
+  try {
+    res.json(getRegistryProfile());
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

@@ -191,12 +191,12 @@ function WeatherLayer({ environment }) {
 
 const formatCount = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n))
 
-// UOW-11 label alignment: `activeGridSag` stays wire-compatible but now flags
-// real AFDC availability, so user-facing text names the actual station state
-// (P = planned build-out, T = temporarily unavailable).
+// UOW-14 Task 14.1: planned build-outs ('P', `isPlanned` on the wire) are
+// blueprints, not faults — they never carry activeGridSag. Only genuinely
+// unavailable stations read as operational problems.
 const stationStateLabel = (station) => {
+  if (station.isPlanned) return ' · PLANNED SITE'
   if (!station.activeGridSag) return ''
-  if (station.statusCode === 'P') return ' · PLANNED SITE'
   if (station.statusCode === 'T') return ' · STATION OFFLINE'
   return ' · STATION DOWN'
 }
@@ -206,10 +206,15 @@ function clusterIcon(cluster) {
   // Screen readers get the full telemetry sentence; the visual bubble shows
   // only the compact count. Enter/Space activate via Leaflet marker keyboard
   // support on the focusable wrapper.
-  // UOW-11: the wire field keeps its `sagCount` name, but at AFDC semantics it
-  // counts stations whose real-world status is not open (planned or offline).
-  const srLabel = sagging
-    ? `Cluster of ${cluster.count} national stations, ${cluster.sagCount} offline or planned — activate to zoom in`
+  // UOW-14: `sagCount` counts only genuinely offline stations; planned
+  // build-outs ride separately as `plannedCount` and never trip the sagging
+  // (amber warning) treatment.
+  const detail = [
+    cluster.sagCount > 0 ? `${cluster.sagCount} offline` : null,
+    cluster.plannedCount > 0 ? `${cluster.plannedCount} planned` : null,
+  ].filter(Boolean).join(', ')
+  const srLabel = detail
+    ? `Cluster of ${cluster.count} national stations, ${detail} — activate to zoom in`
     : `Cluster of ${cluster.count} national stations, all open — activate to zoom in`
   return L.divIcon({
     className: '',
@@ -279,7 +284,8 @@ function NationalFleetLayer({ onViewportTotal }) {
           <div className="space-y-1">
             <p className="text-sm font-semibold text-slate-100">{cluster.count} national stations</p>
             <p className="font-mono text-xs text-slate-400">
-              {cluster.sagCount > 0 ? `${cluster.sagCount} offline/planned · ` : ''}tap to zoom
+              {cluster.sagCount > 0 ? `${cluster.sagCount} offline · ` : ''}
+              {cluster.plannedCount > 0 ? `${cluster.plannedCount} planned · ` : ''}tap to zoom
             </p>
           </div>
         </Tooltip>
@@ -287,16 +293,20 @@ function NationalFleetLayer({ onViewportTotal }) {
     ))
   }
 
+  // Pin palette: teal = open, amber = genuinely offline, and planned sites
+  // render as neutral slate-blue blueprint outlines (dashed, low fill) so a
+  // future build-out never reads as an active system failure.
   return payload.stations.map((station) => (
     <CircleMarker
       key={station.stationId}
       center={[station.latitude, station.longitude]}
       radius={5}
       pathOptions={{
-        color: station.activeGridSag ? '#f59e0b' : '#2dd4bf',
+        color: station.isPlanned ? '#94a3b8' : station.activeGridSag ? '#f59e0b' : '#2dd4bf',
         weight: 1.5,
-        fillColor: station.activeGridSag ? '#f59e0b' : '#2dd4bf',
-        fillOpacity: 0.5,
+        dashArray: station.isPlanned ? '2 3' : null,
+        fillColor: station.isPlanned ? '#94a3b8' : station.activeGridSag ? '#f59e0b' : '#2dd4bf',
+        fillOpacity: station.isPlanned ? 0.2 : 0.5,
       }}
     >
       <Tooltip direction="top" opacity={1} className="charger-tooltip">
