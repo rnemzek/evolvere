@@ -85,7 +85,7 @@ function FinancialMatrix() {
                     }`}
                   >
                     <td className="px-4 py-3">
-                      <p className="font-semibold text-slate-200">{s.name}</p>
+                      <p className="font-semibold text-slate-200 truncate block max-w-[180px] sm:max-w-none">{s.name}</p>
                       <p className="text-xs text-slate-400">
                         {s.stationId} · {[s.town, s.state].filter(Boolean).join(', ')}
                         {s.activeGridSag && (
@@ -100,14 +100,14 @@ function FinancialMatrix() {
                         )}
                       </p>
                     </td>
-                    <td className="px-4 py-3 text-right tabular-nums text-slate-300">
+                    <td className="px-4 py-3 whitespace-nowrap tabular-nums text-right text-slate-300">
                       {usd(s.grossRevenue)}
                     </td>
-                    <td className="px-4 py-3 text-right tabular-nums text-slate-300">
+                    <td className="px-4 py-3 whitespace-nowrap tabular-nums text-right text-slate-300">
                       {usd(s.operatingCost)}
                     </td>
                     <td
-                      className={`px-4 py-3 text-right tabular-nums font-bold ${
+                      className={`px-4 py-3 whitespace-nowrap tabular-nums text-right font-bold ${
                         burning ? 'text-rose-500' : 'text-emerald-400'
                       }`}
                     >

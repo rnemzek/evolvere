@@ -135,7 +135,7 @@ function App() {
     // Financials mains, the map tray) or for Leaflet's pointer-event pipeline,
     // so a thumb-drag pans exactly one thing: the map canvas.
     <div className="fixed inset-0 overflow-hidden overscroll-none touch-none bg-slate-950 text-slate-100 flex flex-col">
-      <header className="z-[1000] flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-slate-800 bg-slate-900/85 backdrop-blur">
+      <header className="z-[1000] w-full left-0 right-0 box-border shrink-0 flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-slate-800 bg-slate-900/85 backdrop-blur">
         <div>
           <h1 className="text-sm font-bold tracking-widest text-cyan-400">
             Nemzilla evolvère GRID
