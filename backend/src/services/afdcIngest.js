@@ -441,14 +441,15 @@ function buildSeedRecord(afdcId, anchor, rand) {
   };
 }
 
-// UOW-15 Task 15.3: static ground-truth data dictionary — the sole authority
-// for the Wilmington/Leland UAT sector. UAT exposed a primary-key ↔ metadata
-// cross-wire in the v6 seed: AFDC-199999 bound the Smithfield's Supercharger
-// label onto what are really The Villages at Brunswick Forest (ChargePoint)
-// coordinates. The dictionary below binds label → coordinate → network →
-// status explicitly, one record per line of the PO's surveyed sheet:
-//   AFDC-199997  Leland Supercharger Hub (Smithfield's)  34.2372, -78.0055
-//   AFDC-199998  Piggly Wiggly Infrastructure Node       34.2421, -77.9984
+// UOW-15 Task 15.3/15.5: static ground-truth data dictionary — the sole
+// authority for the Wilmington/Leland UAT sector. 15.3 dismantled the v6
+// label↔coordinate cross-wire; 15.5 corrects the PO-caught sequential
+// mapping slip (real-world AFDC-199997 belongs exclusively to the Piggly
+// Wiggly on 112 Village Rd NE, so Smithfield's moves to the discrete 199996).
+// The dictionary binds label → coordinate → network → status explicitly, one
+// record per line of the PO's surveyed sheet:
+//   AFDC-199996  Leland Supercharger Hub (Smithfield's)  34.2372, -78.0055
+//   AFDC-199997  Piggly Wiggly Infrastructure Node       34.2421, -77.9984
 //   AFDC-199999  The Villages at Brunswick Forest        34.1954, -78.0231
 // These records are yielded verbatim ahead of the scatter loops: they never
 // enter jitter(), gauss(), or any other randomized noise path, and the
@@ -458,9 +459,9 @@ function buildSeedRecord(afdcId, anchor, rand) {
 // allocation can never collide with them.
 const GROUND_TRUTH_DICTIONARY = [
   {
-    id: 199997,
+    id: 199996,
     station_name: "Leland Supercharger Hub (Smithfield's BBQ Plaza)",
-    street_address: 'Waterford Commercial Plaza, Village Rd NE',
+    street_address: 'Olde Regent Way',
     city: 'Leland',
     state: 'NC',
     zip: '28451',
@@ -476,7 +477,7 @@ const GROUND_TRUTH_DICTIONARY = [
     updated_at: '2026-07-19',
   },
   {
-    id: 199998,
+    id: 199997,
     station_name: 'Piggly Wiggly Infrastructure Node',
     street_address: '112 Village Rd NE',
     city: 'Leland',
@@ -512,6 +513,13 @@ const GROUND_TRUTH_DICTIONARY = [
     updated_at: '2026-07-19',
   },
 ];
+
+// UOW-15 Task 15.5: dictionary id set for wire-level flagging — the spatial
+// cluster engine marks these rows isGroundTruth so the frontend can render
+// them with unmistakable neon accents. (dataIngestionService imports this,
+// completing a benign ESM cycle with the CORRIDORS import above: both
+// bindings are only dereferenced at call time, never during module load.)
+export const GROUND_TRUTH_IDS = new Set(GROUND_TRUTH_DICTIONARY.map((r) => r.id));
 
 // Dictionary-owned sector: a bounding box around the Leland UAT neighborhood.
 // The procedural metadata generator is fully disabled inside it — jitter()
@@ -866,7 +874,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   console.log(`  registry rows:     ${result.stations} | rtree in sync: ${result.rtreeInSync}`);
   console.log(`  LA bbox spot-check: ${result.spatialSpotCheck} stations`);
   console.log(`  coastal spot-check: ${result.coastalSpotCheck} stations | ocean leaks: ${result.oceanLeaks}`);
-  console.log(`  Leland dictionary: ${result.dictionaryBound ? `all ${GROUND_TRUTH_DICTIONARY.length} bindings exact (Smithfield's 34.2372,-78.0055 · Piggly Wiggly 34.2421,-77.9984 · Brunswick Forest 34.1954,-78.0231)` : 'absent (live registry)'} | sector strays: ${result.sectorStrays}`);
+  console.log(`  Leland dictionary: ${result.dictionaryBound ? `all ${GROUND_TRUTH_DICTIONARY.length} bindings exact (199996 Smithfield's 34.2372,-78.0055 · 199997 Piggly Wiggly 34.2421,-77.9984 · 199999 Brunswick Forest 34.1954,-78.0231)` : 'absent (live registry)'} | sector strays: ${result.sectorStrays}`);
   console.log(`  peak heap:         ${result.peakHeapMB} MB | duration: ${result.durationMs} ms`);
   console.log(`  VERIFIED: ${result.verified}`);
 }

@@ -57,7 +57,7 @@ function StationTooltip({ station }) {
     >
       <div className="min-w-52 space-y-2">
         <div>
-          <p className="text-[10px] uppercase tracking-widest text-slate-500">
+          <p className="text-[10px] uppercase tracking-widest text-zinc-400">
             Station
           </p>
           <p className="text-sm font-semibold leading-tight text-slate-100">
@@ -65,7 +65,7 @@ function StationTooltip({ station }) {
           </p>
           <p className="font-mono text-xs text-cyan-400">{station.chargerId}</p>
         </div>
-        <p className="font-mono text-[11px] text-slate-400">
+        <p className="font-mono text-[11px] text-zinc-300">
           {latitude.toFixed(4)}, {longitude.toFixed(4)} · FW{' '}
           {station.firmwareVersion} · OCPP {station.ocppVersion}
         </p>
@@ -89,7 +89,7 @@ function StationTooltip({ station }) {
             </li>
           ))}
         </ul>
-        <p className="text-[10px] uppercase tracking-wider text-slate-600">
+        <p className="text-[10px] uppercase tracking-wider text-zinc-400">
           Tap for full telemetry
         </p>
       </div>
@@ -125,7 +125,7 @@ function GridPowerLayer({ topology, environment }) {
         <Tooltip direction="top" opacity={1} className="charger-tooltip">
           <div className="space-y-1">
             <p className="text-sm font-semibold text-slate-100">{node.name}</p>
-            <p className="font-mono text-xs text-slate-400">
+            <p className="font-mono text-xs text-zinc-300">
               {node.utility} · {node.capacityMVA} MVA · {node.chargerCount} sites
             </p>
             <p className={`text-xs font-bold ${outage ? 'text-red-400' : 'text-emerald-400'}`}>
@@ -163,7 +163,7 @@ function NetworkLayer({ directory, environment }) {
         <Tooltip direction="top" opacity={1} className="charger-tooltip">
           <div className="space-y-1">
             <p className="text-sm font-semibold text-slate-100">{charger.name}</p>
-            <p className="font-mono text-xs text-slate-400">
+            <p className="font-mono text-xs text-zinc-300">
               {charger.operator} · {charger.ispCarrier?.name ?? 'Unknown carrier'}
             </p>
             <p className={`text-xs font-bold ${washed ? 'text-amber-400' : 'text-emerald-400'}`}>
@@ -194,7 +194,7 @@ function WeatherLayer({ environment }) {
       <Tooltip direction="top" opacity={1} className="charger-tooltip">
         <div className="space-y-1">
           <p className="text-sm font-semibold text-slate-100">Severe Weather Zone</p>
-          <p className="font-mono text-xs text-slate-400">
+          <p className="font-mono text-xs text-zinc-300">
             {zone.radiusKm} km radius · {zone.severity}
           </p>
         </div>
@@ -217,6 +217,9 @@ const stationStateLabel = (station) => {
 
 function clusterIcon(cluster) {
   const sagging = cluster.sagCount > 0
+  // UOW-15 Task 15.5: clusters containing a ground-truth validation anchor
+  // take the neon fuchsia treatment so the anchors read from any zoom.
+  const anchored = cluster.groundTruthCount > 0
   // Screen readers get the full telemetry sentence; the visual bubble shows
   // only the compact count. Enter/Space activate via Leaflet marker keyboard
   // support on the focusable wrapper.
@@ -226,15 +229,27 @@ function clusterIcon(cluster) {
   const detail = [
     cluster.sagCount > 0 ? `${cluster.sagCount} offline` : null,
     cluster.plannedCount > 0 ? `${cluster.plannedCount} planned` : null,
+    anchored ? `${cluster.groundTruthCount} ground-truth anchors` : null,
   ].filter(Boolean).join(', ')
   const srLabel = detail
     ? `Cluster of ${cluster.count} national stations, ${detail} — activate to zoom in`
     : `Cluster of ${cluster.count} national stations, all open — activate to zoom in`
   return L.divIcon({
     className: '',
-    html: `<div class="national-cluster${sagging ? ' sagging' : ''}" role="img" aria-label="${srLabel}">${formatCount(cluster.count)}</div>`,
+    html: `<div class="national-cluster${sagging ? ' sagging' : ''}${anchored ? ' has-ground-truth' : ''}" role="img" aria-label="${srLabel}">${formatCount(cluster.count)}</div>`,
     iconSize: [40, 40],
     iconAnchor: [20, 20],
+  })
+}
+
+// UOW-15 Task 15.5: neon fuchsia beacon for dictionary-anchored ground-truth
+// stations — pulsing halo + rimmed core, unmistakable against the dark tiles.
+function groundTruthIcon(station) {
+  return L.divIcon({
+    className: '',
+    html: `<div class="ground-truth-marker" role="img" aria-label="Ground-truth validation anchor: ${station.name}"><span class="halo"></span><span class="core"></span></div>`,
+    iconSize: [44, 44],
+    iconAnchor: [22, 22],
   })
 }
 
@@ -297,7 +312,7 @@ function NationalFleetLayer({ onViewportTotal }) {
         <Tooltip direction="top" offset={[0, -14]} opacity={1} className="charger-tooltip">
           <div className="space-y-1">
             <p className="text-sm font-semibold text-slate-100">{cluster.count} national stations</p>
-            <p className="font-mono text-xs text-slate-400">
+            <p className="font-mono text-xs text-zinc-300">
               {cluster.sagCount > 0 ? `${cluster.sagCount} offline · ` : ''}
               {cluster.plannedCount > 0 ? `${cluster.plannedCount} planned · ` : ''}tap to zoom
             </p>
@@ -307,10 +322,32 @@ function NationalFleetLayer({ onViewportTotal }) {
     ))
   }
 
-  // Pin palette: teal = open, amber = genuinely offline, and planned sites
-  // render as neutral slate-blue blueprint outlines (dashed, low fill) so a
-  // future build-out never reads as an active system failure.
-  return payload.stations.map((station) => (
+  // Pin palette: teal = open, amber = genuinely offline, planned sites render
+  // as neutral slate-blue blueprint outlines (dashed, low fill) so a future
+  // build-out never reads as an active system failure, and ground-truth
+  // dictionary anchors render as neon fuchsia beacons (Task 15.5).
+  return payload.stations.map((station) => station.isGroundTruth ? (
+    <Marker
+      key={station.stationId}
+      position={[station.latitude, station.longitude]}
+      icon={groundTruthIcon(station)}
+      keyboard={true}
+      alt={`Ground-truth validation anchor: ${station.name}`}
+    >
+      <Tooltip direction="top" offset={[0, -14]} opacity={1} className="charger-tooltip">
+        <div className="space-y-1">
+          <p className="text-sm font-semibold text-zinc-100">{station.name}</p>
+          <p className="text-[10px] font-bold uppercase tracking-widest text-fuchsia-300">
+            ◆ Ground-Truth Anchor
+          </p>
+          <p className="font-mono text-xs text-zinc-300">
+            {station.stationId} · {station.state ?? '—'} ·{' '}
+            {station.latitude.toFixed(4)}, {station.longitude.toFixed(4)}
+          </p>
+        </div>
+      </Tooltip>
+    </Marker>
+  ) : (
     <CircleMarker
       key={station.stationId}
       center={[station.latitude, station.longitude]}
@@ -326,7 +363,7 @@ function NationalFleetLayer({ onViewportTotal }) {
       <Tooltip direction="top" opacity={1} className="charger-tooltip">
         <div className="space-y-1">
           <p className="text-sm font-semibold text-slate-100">{station.name}</p>
-          <p className="font-mono text-xs text-slate-400">
+          <p className="font-mono text-xs text-zinc-300">
             {station.stationId} · {station.state ?? '—'}
             {stationStateLabel(station)}
           </p>

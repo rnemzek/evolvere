@@ -39,7 +39,10 @@ let migrated = null;
 // by the static GROUND_TRUTH_DICTIONARY (procedural generation excluded from
 // the sector box), so v7 shreds every cross-wired row and recompiles the
 // registry against the corrected dictionary bindings.
-export const AFDC_SEED_VERSION = 7;
+// v8 (UOW-15 Task 15.5): sequential mapping slip corrected — real-world
+// AFDC-199997 is the Piggly Wiggly (112 Village Rd NE); Smithfield's moves to
+// the discrete 199996. v8 scrubs the cross-wired label rows atomically.
+export const AFDC_SEED_VERSION = 8;
 
 export function ensureAfdcSchema() {
   if (migrated) return migrated;

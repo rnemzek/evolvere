@@ -1,6 +1,9 @@
 import { getDb } from './chargerDirectory.js';
 import { ensureFinancialSchema } from './tariffEngine.js';
 import { boundsQueryParts } from './afdcSchema.js';
+// Benign ESM cycle (afdcIngest imports CORRIDORS from here): both bindings
+// are dereferenced only at call time, never during module evaluation.
+import { GROUND_TRUTH_IDS } from './afdcIngest.js';
 
 // National ingestion pipe (UOW-09 Task 9.1): pages and caches up to
 // NATIONAL_TARGET real US public charger positions along the key shipping
@@ -350,6 +353,8 @@ export function getSpatialClusters({ minLat, maxLat, minLng, maxLng, zoom }) {
         longitude: r.longitude,
         isPlanned: r.status_code === 'P',
         activeGridSag: r.status_code != null && r.status_code !== 'E' && r.status_code !== 'P',
+        // UOW-15 Task 15.5: dictionary anchors render as neon validation pins.
+        isGroundTruth: GROUND_TRUTH_IDS.has(r.afdc_id),
       })),
     };
   }
@@ -357,6 +362,10 @@ export function getSpatialClusters({ minLat, maxLat, minLng, maxLng, zoom }) {
   // Grid buckets sized off the slippy-tile pyramid: each tile axis splits into
   // CELLS_PER_TILE_AXIS cells, so cluster granularity tracks the zoom level.
   const cellDeg = 360 / (2 ** zoom * CELLS_PER_TILE_AXIS);
+  // UOW-15 Task 15.5: dictionary ids are a tiny static set, so inlining them
+  // keeps the aggregate one pass; clusters holding a ground-truth anchor get
+  // a neon treatment so the anchors stay locatable even when panned out.
+  const GROUND_TRUTH = `CASE WHEN s.afdc_id IN (${[...GROUND_TRUTH_IDS].join(',')}) THEN 1 ELSE 0 END`;
   const rows = database
     .prepare(`SELECT CAST((s.latitude + 90.0) / ? AS INTEGER) AS ci,
                      CAST((s.longitude + 180.0) / ? AS INTEGER) AS cj,
@@ -364,7 +373,8 @@ export function getSpatialClusters({ minLat, maxLat, minLng, maxLng, zoom }) {
                      AVG(s.latitude) AS lat,
                      AVG(s.longitude) AS lng,
                      SUM(${ATTENTION}) AS attention,
-                     SUM(${PLANNED}) AS planned
+                     SUM(${PLANNED}) AS planned,
+                     SUM(${GROUND_TRUTH}) AS groundTruth
               FROM afdc_stations s ${join} WHERE ${where}
               GROUP BY ci, cj`)
     .all(cellDeg, cellDeg, ...params);
@@ -381,6 +391,7 @@ export function getSpatialClusters({ minLat, maxLat, minLng, maxLng, zoom }) {
       count: r.n,
       sagCount: r.attention,
       plannedCount: r.planned,
+      groundTruthCount: r.groundTruth,
       latitude: Math.round(r.lat * 1e5) / 1e5,
       longitude: Math.round(r.lng * 1e5) / 1e5,
     })),

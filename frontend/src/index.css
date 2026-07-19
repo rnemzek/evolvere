@@ -9,25 +9,31 @@
 
 /* --- Charger hover tooltip ------------------------------------------------ */
 
-.charger-tooltip {
-  background: rgba(15, 23, 42, 0.94);
+/* UOW-15 Task 15.5: contrast hardening. Leaflet's stylesheet ships inside the
+   lazy map chunk and therefore loads AFTER this file — at equal specificity
+   its white `.leaflet-tooltip` default wins the cascade and popup text bleeds
+   into a light background. The doubled selector outranks it unconditionally,
+   and the deep zinc-900 surface is near-opaque so map tiles can't wash the
+   text out either. */
+.leaflet-tooltip.charger-tooltip {
+  background: rgb(24 24 27 / 0.97); /* zinc-900 */
   backdrop-filter: blur(6px);
-  border: 1px solid rgba(34, 211, 238, 0.35);
+  border: 1px solid rgb(6 182 212 / 0.5); /* cyan-500/50 */
   border-radius: 0.75rem;
   box-shadow:
     0 0 18px rgba(34, 211, 238, 0.12),
     0 10px 30px rgba(0, 0, 0, 0.55);
-  color: #e2e8f0;
+  color: #f4f4f5; /* zinc-100 */
   padding: 0.65rem 0.8rem;
   white-space: normal;
 }
 
-.charger-tooltip.leaflet-tooltip-top::before {
-  border-top-color: rgba(34, 211, 238, 0.45);
+.leaflet-tooltip.charger-tooltip.leaflet-tooltip-top::before {
+  border-top-color: rgb(6 182 212 / 0.6);
 }
 
-.charger-tooltip.leaflet-tooltip-bottom::before {
-  border-bottom-color: rgba(34, 211, 238, 0.45);
+.leaflet-tooltip.charger-tooltip.leaflet-tooltip-bottom::before {
+  border-bottom-color: rgb(6 182 212 / 0.6);
 }
 
 /* Touch-only devices get the full drawer on tap; suppress the hover tooltip
@@ -130,6 +136,50 @@
   box-shadow: 0 0 10px 2px rgba(245, 158, 11, 0.35);
 }
 
+/* UOW-15 Task 15.5: clusters holding a ground-truth validation anchor glow
+   neon fuchsia so the Leland anchors stay locatable from any pan-out level. */
+.national-cluster.has-ground-truth {
+  border-color: rgba(232, 121, 249, 0.95);
+  box-shadow:
+    0 0 12px 3px rgba(232, 121, 249, 0.55),
+    0 0 26px 6px rgba(232, 121, 249, 0.25);
+}
+
+/* Ground-truth validation pin: vivid neon fuchsia beacon with a pulsing halo
+   — unmistakable against the dark tiles and the teal/amber fleet palette. */
+.ground-truth-marker {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.ground-truth-marker .core {
+  width: 16px;
+  height: 16px;
+  border-radius: 9999px;
+  z-index: 2;
+  background: #e879f9; /* fuchsia-400 */
+  border: 2px solid #fdf4ff; /* fuchsia-50 rim for maximum pop */
+  box-shadow:
+    0 0 10px 3px rgba(232, 121, 249, 0.95),
+    0 0 26px 8px rgba(232, 121, 249, 0.45);
+}
+
+.ground-truth-marker .halo {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 16px;
+  height: 16px;
+  border-radius: 9999px;
+  z-index: 1;
+  border: 2px solid rgba(232, 121, 249, 0.95);
+  animation: pulse-ring 1.6s ease-out infinite;
+}
+
 /* Grid Power overlay: substation zone pulses while a GRID_FAILURE is active. */
 .grid-zone-outage {
   animation: grid-outage-pulse 1.4s ease-in-out infinite;
@@ -184,6 +234,7 @@
 @media (prefers-reduced-motion: reduce) {
   .charger-marker .dot,
   .charger-marker .ring,
+  .ground-truth-marker .halo,
   .grid-zone-outage,
   .alert-desk-row-enter,
   .alert-desk-row-resolving {
