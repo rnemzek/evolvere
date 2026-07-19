@@ -31,6 +31,7 @@ import { initNationalIngestion, getSpatialClusters } from './services/dataIngest
 import { ensureAfdcSchema } from './services/afdcSchema.js';
 import { initAfdcIngestion, getRegistryProfile, locateRegistry } from './services/afdcIngest.js';
 import { ensureAlertSchema, onIncidentEvent, raiseAlert, clearAlerts, listOpenLedger } from './services/alertManager.js';
+import { initGridOutages, listGridOutages, syncGridOutages } from './services/gridOutageService.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -378,6 +379,27 @@ app.get('/api/v1/registry/locate', (req, res) => {
   }
 });
 
+// UOW-16 Task 16.1: current county-scoped power-grid outage picture, refreshed
+// through the tiered live-feed → cached-snapshot → deterministic-simulation
+// pipeline and persisted in SQLite alongside the AFDC registry.
+app.get('/api/v1/grid/outages', (_req, res) => {
+  try {
+    res.json(listGridOutages());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Manual refresh vector: forces the tiered pipeline outside the 15-min cadence
+// (operator "refresh now" and the 16.3 overlay's retry path).
+app.post('/api/v1/grid/outages/sync', async (_req, res) => {
+  try {
+    res.json(await syncGridOutages());
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
 // National viewport stream (UOW-09 Task 9.2): bounding-box filter + server-side
 // grid-bucket clustering below zoom 10 so Leaflet holds its 60 FPS budget.
 app.get('/api/v1/fleet/spatial-cluster', (req, res) => {
@@ -515,6 +537,11 @@ onIncidentEvent(({ action, alert }) => {
     client.write(frame);
   }
 });
+const outageBoot = await initGridOutages();
+console.log(
+  `[boot] grid outages: ${outageBoot.counties} counties | source: ${outageBoot.source} | ` +
+  `${outageBoot.critical} CRITICAL / ${outageBoot.warning} WARNING / ${outageBoot.info} INFO | verified: ${outageBoot.verified}`
+);
 await initNationalIngestion();
 initTariffEngine();
 // Dispatcher registers only after boot re-hydration: restart re-faults must not

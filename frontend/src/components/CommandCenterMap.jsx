@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { MapContainer, TileLayer, Marker, Tooltip, Circle, CircleMarker, ZoomControl, useMapEvents } from 'react-leaflet'
+import { AttributionControl, MapContainer, TileLayer, Marker, Tooltip, Circle, CircleMarker, ZoomControl, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 // Leaflet CSS ships with this lazy chunk, not the landing bundle (Task 7.1).
 import 'leaflet/dist/leaflet.css'
@@ -31,6 +31,22 @@ const CARRIER_COLORS = {
   'ISP-TMOBILE-IOT': '#e879f9',
   'ISP-SPECTRUM-FIBER': '#fbbf24',
 }
+// UOW-16 Task 16.2: touch-tap hardening for vector pins. Leaflet 1.9 dropped
+// the legacy `tap` handler in favor of native pointer events, so tap fidelity
+// is configured in two places: (1) this shared Canvas renderer, whose
+// `tolerance` option extends every path's hit-test by 14px in all directions —
+// a 5px CircleMarker becomes a ~38px effective thumb target — and (2) an
+// explicit `click → openTooltip()` handler, because tooltips otherwise open
+// only on mouseover, an event a touch screen never fires. openTooltip() reads
+// data already resident in the layer, so the popup is instant — zero network
+// hop. (Canvas also rasterizes the 1,500-pin street-zoom payload into a
+// single element, cheaper than 1,500 SVG nodes.)
+const touchPinRenderer = L.canvas({ padding: 0.5, tolerance: 14 })
+
+// Desktop is unaffected: hover already opened the tooltip, so the click is a
+// no-op there; bubbling stays off so a pin tap can't fall through to the map.
+const tapOpenTooltip = { click: (e) => e.target.openTooltip() }
+
 const DARK_MATTER_URL =
   'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
 const DARK_MATTER_ATTRIBUTION =
@@ -49,11 +65,13 @@ function markerIcon(station) {
 function StationTooltip({ station }) {
   const { latitude, longitude } = station.location
   return (
+    // fleet-station-tooltip: hover-only — on touch devices the tap opens the
+    // full StationDrawer instead, so index.css suppresses just this tooltip.
     <Tooltip
       direction="top"
       offset={[0, -16]}
       opacity={1}
-      className="charger-tooltip"
+      className="charger-tooltip fleet-station-tooltip"
     >
       <div className="min-w-52 space-y-2">
         <div>
@@ -118,9 +136,10 @@ function GridPowerLayer({ topology, environment }) {
         }}
         eventHandlers={
           outage
-            ? { add: (e) => e.target.getElement()?.classList.add('grid-zone-outage') }
-            : undefined
+            ? { ...tapOpenTooltip, add: (e) => e.target.getElement()?.classList.add('grid-zone-outage') }
+            : tapOpenTooltip
         }
+        bubblingMouseEvents={false}
       >
         <Tooltip direction="top" opacity={1} className="charger-tooltip">
           <div className="space-y-1">
@@ -151,6 +170,9 @@ function NetworkLayer({ directory, environment }) {
         key={charger.ocmId}
         center={[charger.location.latitude, charger.location.longitude]}
         radius={9}
+        renderer={touchPinRenderer}
+        eventHandlers={tapOpenTooltip}
+        bubblingMouseEvents={false}
         pathOptions={{
           color: washed ? '#64748b' : (CARRIER_COLORS[carrierId] ?? '#94a3b8'),
           weight: 2,
@@ -183,6 +205,8 @@ function WeatherLayer({ environment }) {
       key={zone.eventId}
       center={[zone.center.latitude, zone.center.longitude]}
       radius={zone.radiusKm * 1000}
+      eventHandlers={tapOpenTooltip}
+      bubblingMouseEvents={false}
       pathOptions={{
         color: '#a5b4fc',
         weight: 2,
@@ -333,6 +357,7 @@ function NationalFleetLayer({ onViewportTotal }) {
       icon={groundTruthIcon(station)}
       keyboard={true}
       alt={`Ground-truth validation anchor: ${station.name}`}
+      eventHandlers={tapOpenTooltip}
     >
       <Tooltip direction="top" offset={[0, -14]} opacity={1} className="charger-tooltip">
         <div className="space-y-1">
@@ -352,6 +377,9 @@ function NationalFleetLayer({ onViewportTotal }) {
       key={station.stationId}
       center={[station.latitude, station.longitude]}
       radius={5}
+      renderer={touchPinRenderer}
+      eventHandlers={tapOpenTooltip}
+      bubblingMouseEvents={false}
       pathOptions={{
         color: station.isPlanned ? '#94a3b8' : station.activeGridSag ? '#f59e0b' : '#2dd4bf',
         weight: 1.5,
@@ -523,9 +551,15 @@ function CommandCenterMap({ stations, onSelectStation }) {
         // it is Leaflet's default, but the navigator's hint chip advertises it,
         // so pin the behavior rather than rely on the default staying true.
         boxZoom={true}
+        // UOW-16 Task 16.2: attribution moves out of the default bottom-right
+        // corner — it was stacking into the same Leaflet corner container as
+        // the zoom bar, crowding the +/- strip on compact viewports.
+        attributionControl={false}
         className="h-full w-full"
       >
-        {/* UOW-15 Task 15.4: native +/- restored, zinc-themed via index.css */}
+        <AttributionControl position="bottomleft" />
+        {/* UOW-15 Task 15.4: native +/- restored, zinc-themed via index.css.
+            UOW-16 Task 16.2: sole occupant of bottom-right, ⌂ stacked above. */}
         <ZoomControl position="bottomright" />
         <TileLayer url={DARK_MATTER_URL} attribution={DARK_MATTER_ATTRIBUTION} />
         {layers.national && <NationalFleetLayer onViewportTotal={setNationalTotal} />}
@@ -544,9 +578,11 @@ function CommandCenterMap({ stations, onSelectStation }) {
             </Marker>
           ))}
       </MapContainer>
-      {/* UOW-15 Task 15.4: floating Home — resets the viewport to the
-          canonical national overview. Sits in the bottom-right control strip
-          directly above the native zoom buttons. */}
+      {/* UOW-15 Task 15.4 / UOW-16 Task 16.2: floating Home — resets the
+          viewport to the canonical national overview. Re-aligned to the zoom
+          bar's exact outer box: the bar is 44px links + 2px frame = 46px wide
+          and 91px tall, anchored 10px from the corner — so ⌂ takes w-[46px]
+          and bottom-[111px] for a matching 10px gap above the [+]. */}
       <button
         type="button"
         title="Reset to national overview"
@@ -554,28 +590,30 @@ function CommandCenterMap({ stations, onSelectStation }) {
         onClick={() =>
           mapInstance?.flyToBounds(NATIONAL_OVERVIEW_BOUNDS, { padding: [24, 24], duration: 1.1 })
         }
-        className="absolute bottom-[106px] right-[10px] z-[1000] flex h-11 w-11 items-center justify-center rounded-lg border border-zinc-700 bg-zinc-900/90 text-xl leading-none text-zinc-200 shadow-lg shadow-black/40 backdrop-blur transition-colors hover:border-cyan-600 hover:text-cyan-300"
+        className="absolute bottom-[111px] right-[10px] z-[1000] flex h-11 w-[46px] items-center justify-center rounded-lg border border-zinc-700 bg-zinc-900/90 text-xl leading-none text-zinc-200 shadow-lg shadow-black/40 backdrop-blur transition-colors hover:border-cyan-600 hover:text-cyan-300"
       >
         <span aria-hidden="true">⌂</span>
       </button>
-      {/* Mobile control-tray toggle: visible only below md, floats over the
-          tray (z-[1200]) so the same 44px target opens and closes it. */}
-      <button
-        type="button"
-        aria-expanded={trayOpen}
-        aria-controls="map-control-tray"
-        aria-label={trayOpen ? 'Close map controls' : 'Open map controls'}
-        onClick={() => setTrayOpen((open) => !open)}
-        className="md:hidden absolute top-3 right-3 z-[1200] flex h-11 w-11 items-center justify-center rounded-lg border border-zinc-700 bg-zinc-900/90 text-zinc-200 shadow-lg shadow-black/40 backdrop-blur transition-colors hover:border-cyan-600 hover:text-cyan-300"
-      >
-        <svg aria-hidden="true" viewBox="0 0 16 16" className="h-4 w-4 stroke-current fill-none" strokeWidth="1.8" strokeLinecap="round">
-          {trayOpen ? (
-            <path d="M3.5 3.5l9 9M12.5 3.5l-9 9" />
-          ) : (
+      {/* UOW-16 Task 16.2: the open-tray toggle renders only while the tray is
+          closed. Its old floating [X] lived in the map container's coordinate
+          space (absolute, below the masthead) while the tray is viewport-fixed
+          — two different origins, so the X landed on the Navigator's search
+          row and blocked the [Go] button. Closing now happens exclusively
+          inside the tray's own layout flow, where overlap is impossible. */}
+      {!trayOpen && (
+        <button
+          type="button"
+          aria-expanded={false}
+          aria-controls="map-control-tray"
+          aria-label="Open map controls"
+          onClick={() => setTrayOpen(true)}
+          className="md:hidden absolute top-3 right-3 z-[1110] flex h-11 w-11 items-center justify-center rounded-lg border border-zinc-700 bg-zinc-900/90 text-zinc-200 shadow-lg shadow-black/40 backdrop-blur transition-colors hover:border-cyan-600 hover:text-cyan-300"
+        >
+          <svg aria-hidden="true" viewBox="0 0 16 16" className="h-4 w-4 stroke-current fill-none" strokeWidth="1.8" strokeLinecap="round">
             <path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11" />
-          )}
-        </svg>
-      </button>
+          </svg>
+        </button>
+      )}
       {trayOpen && (
         <button
           type="button"
@@ -586,13 +624,36 @@ function CommandCenterMap({ stations, onSelectStation }) {
       )}
       {/* md+: display:contents — panels float in their own corners exactly as
           before. Below md: this wrapper becomes the sliding side tray holding
-          both panels, translated off-canvas until the toggle opens it. */}
+          both panels, translated off-canvas until the toggle opens it.
+          Discrete z ladder (Task 16.2): backdrop 1090 < tray 1100 < open
+          toggle 1110 — every control on its own layer, no collisions.
+          overscroll-contain stops a tray scroll from chaining into a ghost
+          page scroll behind the backdrop. */}
       <div
         id="map-control-tray"
-        className={`md:contents max-md:fixed max-md:inset-y-0 max-md:right-0 max-md:z-[1100] max-md:w-72 max-md:max-w-[85vw] max-md:space-y-3 max-md:overflow-y-auto max-md:border-l max-md:border-slate-700 max-md:bg-slate-950/95 max-md:p-3 max-md:pt-16 max-md:backdrop-blur max-md:motion-safe:transition-transform max-md:motion-safe:duration-200 ${
+        className={`md:contents max-md:fixed max-md:inset-y-0 max-md:right-0 max-md:z-[1100] max-md:w-72 max-md:max-w-[85vw] max-md:space-y-3 max-md:overflow-y-auto max-md:overscroll-contain max-md:border-l max-md:border-slate-700 max-md:bg-slate-950/95 max-md:p-3 max-md:backdrop-blur max-md:motion-safe:transition-transform max-md:motion-safe:duration-200 ${
           trayOpen ? 'max-md:translate-x-0' : 'max-md:translate-x-full'
         }`}
       >
+        {/* In-flow close row (mobile only): the [X] participates in the tray's
+            own layout above the Navigation card, so it can never overlap the
+            search input or [Go] regardless of masthead height or wrapping. */}
+        <div className="md:hidden flex items-center justify-between gap-3 pb-1">
+          <p className="px-1 text-[10px] font-semibold uppercase tracking-widest text-slate-400">
+            Map Controls
+          </p>
+          <button
+            type="button"
+            aria-controls="map-control-tray"
+            aria-label="Close map controls"
+            onClick={() => setTrayOpen(false)}
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-zinc-700 bg-zinc-900/90 text-zinc-200 transition-colors hover:border-cyan-600 hover:text-cyan-300"
+          >
+            <svg aria-hidden="true" viewBox="0 0 16 16" className="h-4 w-4 stroke-current fill-none" strokeWidth="1.8" strokeLinecap="round">
+              <path d="M3.5 3.5l9 9M12.5 3.5l-9 9" />
+            </svg>
+          </button>
+        </div>
         <MapNavigator map={mapInstance} />
         <MapLayerControls
           layers={layers}

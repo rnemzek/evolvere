@@ -127,7 +127,14 @@ function App() {
   )
 
   return (
-    <div className="relative h-screen w-screen overflow-hidden bg-slate-950 text-slate-100 flex flex-col">
+    // UOW-16 Task 16.2: fixed inset-0 pins the shell to the visual viewport —
+    // h-screen tracked the layout viewport, so mobile URL-bar collapse plus
+    // body overscroll let the masthead drift ("ghost scrolling"). touch-none
+    // kills native panning on the shell itself; it is NOT consulted for
+    // descendants that sit inside their own scroll container (the Dashboard/
+    // Financials mains, the map tray) or for Leaflet's pointer-event pipeline,
+    // so a thumb-drag pans exactly one thing: the map canvas.
+    <div className="fixed inset-0 overflow-hidden overscroll-none touch-none bg-slate-950 text-slate-100 flex flex-col">
       <header className="z-[1000] flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-slate-800 bg-slate-900/85 backdrop-blur">
         <div>
           <h1 className="text-sm font-bold tracking-widest text-cyan-400">
@@ -180,7 +187,7 @@ function App() {
           <StationDrawer station={selectedStation} onClose={() => setSelectedStationId(null)} />
         </main>
       ) : view === 'Financials' ? (
-        <main className="flex-1 overflow-y-auto p-4">
+        <main className="flex-1 overflow-y-auto overscroll-contain p-4">
           <ChunkErrorBoundary label="Financial matrix">
             <Suspense fallback={<LedgerLoadingFallback />}>
               <FinancialMatrix />
@@ -188,7 +195,7 @@ function App() {
           </ChunkErrorBoundary>
         </main>
       ) : (
-        <main className="flex-1 overflow-y-auto p-4 space-y-4">
+        <main className="flex-1 overflow-y-auto overscroll-contain p-4 space-y-4">
           <KPIStats stations={stations} transactions={transactions} />
           <ROIPanel stations={stations} />
           <AlertDesk />

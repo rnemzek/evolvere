@@ -1,5 +1,16 @@
 @import "tailwindcss";
 
+/* UOW-16 Task 16.2: viewport ghost-scroll hardening. The app shell is
+   position:fixed inset-0, so nothing in the document flow should ever scroll —
+   overscroll-behavior kills the iOS/Android rubber-band bounce that dragged
+   the masthead and drawers off-screen during map pans. */
+html,
+body,
+#root {
+  height: 100%;
+  overscroll-behavior: none;
+}
+
 /* Leaflet needs an explicit height on its container; the map fills the app shell. */
 .leaflet-container {
   height: 100%;
@@ -36,15 +47,29 @@
   border-bottom-color: rgb(6 182 212 / 0.6);
 }
 
-/* Touch-only devices get the full drawer on tap; suppress the hover tooltip
-   so it can't overlap it. */
+/* UOW-16 Task 16.2: touch devices previously lost EVERY tooltip — this rule
+   matched the shared .charger-tooltip class, so national pins, clusters, and
+   overlay zones (whose ONLY affordance is the tooltip) went dead under a
+   thumb. The suppression now targets only the fleet station tooltip, whose
+   tap correctly opens the full StationDrawer instead. */
 @media (hover: none) {
-  .charger-tooltip {
+  .fleet-station-tooltip {
     display: none !important;
   }
 }
 
 /* --- Charger marker states ------------------------------------------------ */
+
+/* UOW-16 Task 16.2: tap-friendly gates on every interactive icon element.
+   touch-action: manipulation strips the double-tap-zoom wait so a single
+   thumb-press fires Leaflet's pointer-event click instantly; pointer-events
+   is pinned explicitly so no ancestor stacking rule can swallow the tap. */
+.charger-marker,
+.ground-truth-marker,
+.national-cluster {
+  touch-action: manipulation;
+  pointer-events: auto;
+}
 
 .charger-marker {
   position: relative;
