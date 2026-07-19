@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { MapContainer, TileLayer, Marker, Tooltip, Circle, CircleMarker, useMapEvents } from 'react-leaflet'
+import { MapContainer, TileLayer, Marker, Tooltip, Circle, CircleMarker, ZoomControl, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 // Leaflet CSS ships with this lazy chunk, not the landing bundle (Task 7.1).
 import 'leaflet/dist/leaflet.css'
@@ -10,6 +10,10 @@ import { useEnvironment } from '../hooks/useEnvironment.js'
 import { fetchSpatialClusters, fetchRegistryLocate } from '../services/fleetApi.js'
 
 const OC_CENTER = [33.74, -117.82]
+
+// UOW-15 Task 15.4: canonical national overview — the Home control resets the
+// viewport to this CONUS frame.
+const NATIONAL_OVERVIEW_BOUNDS = [[24.4, -124.8], [49.4, -66.7]]
 
 // UOW-15 Task 15.2: macro US sector presets — [[south, west], [north, east]]
 // viewport bounds the operator can teleport to instantly (no network hop).
@@ -374,9 +378,11 @@ function MapNavigator({ map }) {
   }
 
   return (
+    // UOW-15 Task 15.4: floats top-left on md+ viewports; below md it docks
+    // full-width inside the slide-in control tray.
     <section
       aria-label="Map Navigation"
-      className="absolute top-3 left-3 z-[1000] w-60 rounded-xl border border-slate-700 bg-slate-900/90 backdrop-blur p-2 space-y-2 shadow-lg shadow-black/40"
+      className="md:absolute md:top-3 md:left-3 md:z-[1000] md:w-60 max-md:w-full rounded-xl border border-slate-700 bg-slate-900/90 backdrop-blur p-2 space-y-2 shadow-lg shadow-black/40"
     >
       <h2 className="px-1 pt-1 text-[10px] font-semibold uppercase tracking-widest text-slate-200">
         Navigation
@@ -451,6 +457,9 @@ function CommandCenterMap({ stations, onSelectStation }) {
   // Leaflet Map instance for the navigation suite — react-leaflet v5 exposes
   // it via MapContainer ref once the map mounts.
   const [mapInstance, setMapInstance] = useState(null)
+  // UOW-15 Task 15.4: mobile (<768px) collapses both overlay panels into a
+  // slide-in side tray so the touch surface stays clear; md+ ignores this.
+  const [trayOpen, setTrayOpen] = useState(false)
 
   const gridDown = (environment?.gridNodes ?? []).filter((n) => n.powerStatus === 'OUTAGE').length
   const ispDown = (environment?.ispCarriers ?? []).filter((c) => c.networkStatus === 'DOWN').length
@@ -470,6 +479,8 @@ function CommandCenterMap({ stations, onSelectStation }) {
         ref={setMapInstance}
         center={OC_CENTER}
         zoom={11}
+        // Default top-left zoom control stays off — the navigator panel owns
+        // that corner; the themed <ZoomControl> below re-homes it bottom-right.
         zoomControl={false}
         // UOW-15 Task 15.2: box zoom (Shift + click-drag) explicitly enabled —
         // it is Leaflet's default, but the navigator's hint chip advertises it,
@@ -477,6 +488,8 @@ function CommandCenterMap({ stations, onSelectStation }) {
         boxZoom={true}
         className="h-full w-full"
       >
+        {/* UOW-15 Task 15.4: native +/- restored, zinc-themed via index.css */}
+        <ZoomControl position="bottomright" />
         <TileLayer url={DARK_MATTER_URL} attribution={DARK_MATTER_ATTRIBUTION} />
         {layers.national && <NationalFleetLayer onViewportTotal={setNationalTotal} />}
         {layers.grid && <GridPowerLayer topology={topology} environment={environment} />}
@@ -494,12 +507,62 @@ function CommandCenterMap({ stations, onSelectStation }) {
             </Marker>
           ))}
       </MapContainer>
-      <MapNavigator map={mapInstance} />
-      <MapLayerControls
-        layers={layers}
-        badges={badges}
-        onToggle={(id) => setLayers((prev) => ({ ...prev, [id]: !prev[id] }))}
-      />
+      {/* UOW-15 Task 15.4: floating Home — resets the viewport to the
+          canonical national overview. Sits in the bottom-right control strip
+          directly above the native zoom buttons. */}
+      <button
+        type="button"
+        title="Reset to national overview"
+        aria-label="Reset viewport to national overview"
+        onClick={() =>
+          mapInstance?.flyToBounds(NATIONAL_OVERVIEW_BOUNDS, { padding: [24, 24], duration: 1.1 })
+        }
+        className="absolute bottom-[106px] right-[10px] z-[1000] flex h-11 w-11 items-center justify-center rounded-lg border border-zinc-700 bg-zinc-900/90 text-xl leading-none text-zinc-200 shadow-lg shadow-black/40 backdrop-blur transition-colors hover:border-cyan-600 hover:text-cyan-300"
+      >
+        <span aria-hidden="true">⌂</span>
+      </button>
+      {/* Mobile control-tray toggle: visible only below md, floats over the
+          tray (z-[1200]) so the same 44px target opens and closes it. */}
+      <button
+        type="button"
+        aria-expanded={trayOpen}
+        aria-controls="map-control-tray"
+        aria-label={trayOpen ? 'Close map controls' : 'Open map controls'}
+        onClick={() => setTrayOpen((open) => !open)}
+        className="md:hidden absolute top-3 right-3 z-[1200] flex h-11 w-11 items-center justify-center rounded-lg border border-zinc-700 bg-zinc-900/90 text-zinc-200 shadow-lg shadow-black/40 backdrop-blur transition-colors hover:border-cyan-600 hover:text-cyan-300"
+      >
+        <svg aria-hidden="true" viewBox="0 0 16 16" className="h-4 w-4 stroke-current fill-none" strokeWidth="1.8" strokeLinecap="round">
+          {trayOpen ? (
+            <path d="M3.5 3.5l9 9M12.5 3.5l-9 9" />
+          ) : (
+            <path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11" />
+          )}
+        </svg>
+      </button>
+      {trayOpen && (
+        <button
+          type="button"
+          aria-label="Close map controls"
+          onClick={() => setTrayOpen(false)}
+          className="md:hidden fixed inset-0 z-[1090] bg-slate-950/60"
+        />
+      )}
+      {/* md+: display:contents — panels float in their own corners exactly as
+          before. Below md: this wrapper becomes the sliding side tray holding
+          both panels, translated off-canvas until the toggle opens it. */}
+      <div
+        id="map-control-tray"
+        className={`md:contents max-md:fixed max-md:inset-y-0 max-md:right-0 max-md:z-[1100] max-md:w-72 max-md:max-w-[85vw] max-md:space-y-3 max-md:overflow-y-auto max-md:border-l max-md:border-slate-700 max-md:bg-slate-950/95 max-md:p-3 max-md:pt-16 max-md:backdrop-blur max-md:motion-safe:transition-transform max-md:motion-safe:duration-200 ${
+          trayOpen ? 'max-md:translate-x-0' : 'max-md:translate-x-full'
+        }`}
+      >
+        <MapNavigator map={mapInstance} />
+        <MapLayerControls
+          layers={layers}
+          badges={badges}
+          onToggle={(id) => setLayers((prev) => ({ ...prev, [id]: !prev[id] }))}
+        />
+      </div>
     </>
   )
 }

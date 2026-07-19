@@ -190,3 +190,35 @@
     animation: none;
   }
 }
+
+/* UOW-15 Task 15.4: zinc dark theme for Leaflet's restored native zoom
+   control (bottom-right). Doubled class specificity so these rules beat
+   leaflet.css even though that sheet loads later with the lazy map chunk. */
+.leaflet-control-zoom.leaflet-bar {
+  border: 1px solid rgb(63 63 70 / 0.9); /* zinc-700 */
+  border-radius: 0.5rem;
+  overflow: hidden;
+  box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.4);
+}
+.leaflet-control-zoom.leaflet-bar a {
+  width: 2.75rem; /* 44px touch targets */
+  height: 2.75rem;
+  line-height: 2.75rem;
+  background: rgb(24 24 27 / 0.9); /* zinc-900 */
+  color: #e4e4e7; /* zinc-200 */
+  border-bottom: 1px solid rgb(63 63 70 / 0.9);
+  backdrop-filter: blur(4px);
+  transition: color 150ms, background-color 150ms;
+}
+.leaflet-control-zoom.leaflet-bar a:last-child {
+  border-bottom: 0;
+}
+.leaflet-control-zoom.leaflet-bar a:hover,
+.leaflet-control-zoom.leaflet-bar a:focus {
+  background: rgb(39 39 42); /* zinc-800 */
+  color: #67e8f9; /* cyan-300 */
+}
+.leaflet-control-zoom.leaflet-bar a.leaflet-disabled {
+  background: rgb(24 24 27 / 0.6);
+  color: #52525b; /* zinc-600 */
+}

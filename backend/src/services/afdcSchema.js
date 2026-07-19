@@ -33,7 +33,13 @@ let migrated = null;
 // v6 (UOW-15 Task 15.1): dual Leland ground-truth anchors (Supercharger Hub +
 // Piggly Wiggly node) land in the seed; any cached pre-v6 registry — including
 // lingering ocean/lake rows from pre-14.4 geometry — is dropped on boot.
-export const AFDC_SEED_VERSION = 6;
+// v7 (UOW-15 Task 15.3): UAT caught a primary-key ↔ metadata cross-wire
+// (AFDC-199999 carried the Smithfield's label on what are really Brunswick
+// Forest ChargePoint coordinates). The Leland sector is now owned exclusively
+// by the static GROUND_TRUTH_DICTIONARY (procedural generation excluded from
+// the sector box), so v7 shreds every cross-wired row and recompiles the
+// registry against the corrected dictionary bindings.
+export const AFDC_SEED_VERSION = 7;
 
 export function ensureAfdcSchema() {
   if (migrated) return migrated;

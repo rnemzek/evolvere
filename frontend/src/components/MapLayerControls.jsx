@@ -7,15 +7,16 @@ const LAYER_DEFS = [
 ]
 
 /**
- * Map overlay toggle panel. Absolutely positioned over the map canvas (zero
- * layout shift), native <button> toggles with aria-pressed for full
- * keyboard/screen-reader operability.
+ * Map overlay toggle panel. Native <button> toggles with aria-pressed for
+ * full keyboard/screen-reader operability. UOW-15 Task 15.4: floats top-right
+ * over the map canvas on md+ viewports (zero layout shift); below md it docks
+ * full-width inside the CommandCenterMap slide-in control tray.
  */
 function MapLayerControls({ layers, badges, onToggle }) {
   return (
     <section
       aria-label="Map Layer Controls"
-      className="absolute top-3 right-3 z-[1000] w-48 rounded-xl border border-slate-700 bg-slate-900/90 backdrop-blur p-2 space-y-1 shadow-lg shadow-black/40"
+      className="md:absolute md:top-3 md:right-3 md:z-[1000] md:w-48 max-md:w-full rounded-xl border border-slate-700 bg-slate-900/90 backdrop-blur p-2 space-y-1 shadow-lg shadow-black/40"
     >
       <h2 className="px-2 pt-1 text-[10px] font-semibold uppercase tracking-widest text-slate-200">
         Map Layers

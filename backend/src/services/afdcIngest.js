@@ -378,13 +378,17 @@ function snapLandward(lat, lng) {
 }
 
 // Rejection-sample the scatter: redraw until the candidate clears every
-// coastal zone (same deterministic stream, so the seed stays reproducible);
-// after 40 water draws, snap deterministically to the nearest landward point.
+// coastal zone AND stays out of the dictionary-owned ground-truth sector
+// (same deterministic stream, so the seed stays reproducible); after 40
+// rejected draws, snap deterministically to the nearest landward point.
+// UOW-15 Task 15.3: the sector exclusion is what "completely disables" the
+// procedural generator for the Wilmington/Leland coordinates — a Wilmington
+// metro draw that lands in the sector regenerates outside it instead.
 function jitter(rand, lat, lng, sigmaLat, sigmaLng) {
   for (let attempt = 0; attempt < 40; attempt += 1) {
     const cLat = lat + gauss(rand) * sigmaLat;
     const cLng = lng + gauss(rand) * sigmaLng;
-    if (onLand(cLat, cLng)) return { lat: cLat, lng: cLng };
+    if (onLand(cLat, cLng) && !inGroundTruthSector(cLat, cLng)) return { lat: cLat, lng: cLng };
   }
   return snapLandward(lat, lng);
 }
@@ -437,35 +441,25 @@ function buildSeedRecord(afdcId, anchor, rand) {
   };
 }
 
-// UOW-14 Task 14.4 / UOW-15 Task 15.1: PO-verified ground-truth pins —
-// validation anchors placed at exact surveyed coordinates with ZERO jitter,
-// so acceptance testing has fixed landmarks to sight against. These records
-// are yielded verbatim ahead of the scatter loops: they never enter jitter(),
-// gauss(), or any other randomized noise path — the Leland sector's anchors
-// are bit-exact by construction, not by rejection sampling. Ids sit below the
-// generated range (200001+) so scatter allocation can never collide with them.
-const GROUND_TRUTH_PINS = [
+// UOW-15 Task 15.3: static ground-truth data dictionary — the sole authority
+// for the Wilmington/Leland UAT sector. UAT exposed a primary-key ↔ metadata
+// cross-wire in the v6 seed: AFDC-199999 bound the Smithfield's Supercharger
+// label onto what are really The Villages at Brunswick Forest (ChargePoint)
+// coordinates. The dictionary below binds label → coordinate → network →
+// status explicitly, one record per line of the PO's surveyed sheet:
+//   AFDC-199997  Leland Supercharger Hub (Smithfield's)  34.2372, -78.0055
+//   AFDC-199998  Piggly Wiggly Infrastructure Node       34.2421, -77.9984
+//   AFDC-199999  The Villages at Brunswick Forest        34.1954, -78.0231
+// These records are yielded verbatim ahead of the scatter loops: they never
+// enter jitter(), gauss(), or any other randomized noise path, and the
+// GROUND_TRUTH_SECTOR exclusion below bars procedural records from the sector
+// entirely, so no generated metadata can ever cross-wire onto real Leland
+// coordinates again. Ids sit below the generated range (200001+) so scatter
+// allocation can never collide with them.
+const GROUND_TRUTH_DICTIONARY = [
   {
-    id: 199998,
-    station_name: 'Piggly Wiggly Infrastructure Node - Leland',
-    street_address: '112 Village Rd NE',
-    city: 'Leland',
-    state: 'NC',
-    zip: '28451',
-    latitude: 34.2421,
-    longitude: -77.9984,
-    fuel_type_code: 'ELEC',
-    access_days_time: '24 hours daily',
-    ev_network: 'ChargePoint Network',
-    status_code: 'E',
-    ev_dc_fast_num: null,
-    ev_level2_evse_num: 4,
-    ev_connector_types: ['J1772'],
-    updated_at: '2026-07-19',
-  },
-  {
-    id: 199999,
-    station_name: "Smithfield's BBQ Plaza Supercharger - Leland",
+    id: 199997,
+    station_name: "Leland Supercharger Hub (Smithfield's BBQ Plaza)",
     street_address: 'Waterford Commercial Plaza, Village Rd NE',
     city: 'Leland',
     state: 'NC',
@@ -475,18 +469,65 @@ const GROUND_TRUTH_PINS = [
     fuel_type_code: 'ELEC',
     access_days_time: '24 hours daily',
     ev_network: 'Tesla',
-    status_code: 'E',
+    status_code: 'E', // OPEN
     ev_dc_fast_num: 12,
     ev_level2_evse_num: null,
     ev_connector_types: ['TESLA'],
-    updated_at: '2026-07-18',
+    updated_at: '2026-07-19',
+  },
+  {
+    id: 199998,
+    station_name: 'Piggly Wiggly Infrastructure Node',
+    street_address: '112 Village Rd NE',
+    city: 'Leland',
+    state: 'NC',
+    zip: '28451',
+    latitude: 34.2421,
+    longitude: -77.9984,
+    fuel_type_code: 'ELEC',
+    access_days_time: '24 hours daily',
+    ev_network: 'ChargePoint Network',
+    status_code: 'E', // OPEN
+    ev_dc_fast_num: null,
+    ev_level2_evse_num: 4,
+    ev_connector_types: ['J1772'],
+    updated_at: '2026-07-19',
+  },
+  {
+    id: 199999,
+    station_name: 'The Villages at Brunswick Forest (ChargePoint)',
+    street_address: 'The Villages Town Center, Brunswick Forest Pkwy',
+    city: 'Leland',
+    state: 'NC',
+    zip: '28451',
+    latitude: 34.1954,
+    longitude: -78.0231,
+    fuel_type_code: 'ELEC',
+    access_days_time: '24 hours daily',
+    ev_network: 'ChargePoint Network',
+    status_code: 'E', // OPEN
+    ev_dc_fast_num: null,
+    ev_level2_evse_num: 2,
+    ev_connector_types: ['J1772'],
+    updated_at: '2026-07-19',
   },
 ];
 
+// Dictionary-owned sector: a bounding box around the Leland UAT neighborhood.
+// The procedural metadata generator is fully disabled inside it — jitter()
+// rejects any candidate landing here exactly as it rejects water, so the only
+// rows that can exist in the sector are the dictionary bindings above.
+const GROUND_TRUTH_SECTOR = [34.17, 34.27, -78.06, -77.97]; // [S, N, W, E]
+
+function inGroundTruthSector(lat, lng) {
+  const [s, n, w, e] = GROUND_TRUTH_SECTOR;
+  return lat >= s && lat <= n && lng >= w && lng <= e;
+}
+
 /** Deterministic generator yielding `target` AFDC-shaped records one at a time. */
 function* generateSeedRecords(target) {
-  yield* GROUND_TRUTH_PINS;
-  const scattered = target - GROUND_TRUTH_PINS.length;
+  yield* GROUND_TRUTH_DICTIONARY;
+  const scattered = target - GROUND_TRUTH_DICTIONARY.length;
   const corridorCount = Math.round(scattered * CORRIDOR_SHARE);
   const metroCount = scattered - corridorCount;
   const metroWeightTotal = METROS.reduce((a, m) => a + m[4], 0);
@@ -599,23 +640,37 @@ function verifyRegistry(rtreeActive) {
     if (!onLand(row.lat, row.lng)) oceanLeaks += 1;
   }
   // Reported but NOT gating `verified`: a live NREL ingest legitimately lacks
-  // the synthetic demo pins, and must still verify clean. UOW-15 Task 15.1:
-  // every ground-truth pin must sit at its exact surveyed coordinate — one
-  // check derived from the same GROUND_TRUTH_PINS array the generator yields,
-  // so the anchor list and its verification can never drift apart.
-  const pinStmt = database
+  // the synthetic dictionary rows, and must still verify clean.
+  // UOW-15 Task 15.3: the check now asserts the FULL binding — id, exact
+  // coordinate, label, network, and status together — derived from the same
+  // GROUND_TRUTH_DICTIONARY the generator yields, so the exact cross-wire UAT
+  // caught (right coordinates under the wrong label) can never verify green.
+  const bindingStmt = database
     .prepare(`SELECT COUNT(*) AS n FROM afdc_stations
-              WHERE afdc_id = ? AND ABS(latitude - ?) < 1e-6 AND ABS(longitude - ?) < 1e-6`);
-  const pinsAnchored = GROUND_TRUTH_PINS.every(
-    (pin) => pinStmt.get(pin.id, pin.latitude, pin.longitude).n === 1
+              WHERE afdc_id = ? AND ABS(latitude - ?) < 1e-6 AND ABS(longitude - ?) < 1e-6
+                AND station_name = ? AND ev_network = ? AND status_code = ?`);
+  const dictionaryBound = GROUND_TRUTH_DICTIONARY.every(
+    (rec) => bindingStmt
+      .get(rec.id, rec.latitude, rec.longitude, rec.station_name, rec.ev_network, rec.status_code)
+      .n === 1
   );
+  // Sector purity: no procedurally generated row may exist inside the
+  // dictionary-owned Leland box (live NREL data legitimately has other real
+  // stations there, so this is reported, not gating).
+  const [secS, secN, secW, secE] = GROUND_TRUTH_SECTOR;
+  const { n: sectorStrays } = database
+    .prepare(`SELECT COUNT(*) AS n FROM afdc_stations
+              WHERE latitude BETWEEN ? AND ? AND longitude BETWEEN ? AND ?
+                AND afdc_id NOT IN (${GROUND_TRUTH_DICTIONARY.map((r) => r.id).join(',')})`)
+    .get(secS, secN, secW, secE);
   return {
     stations,
     rtreeInSync: rtreeRows === stations,
     spatialSpotCheck: laBox.length,
     coastalSpotCheck: coastalBox.length,
     oceanLeaks,
-    groundTruthPins: pinsAnchored,
+    dictionaryBound,
+    sectorStrays,
     verified: stations > 0 && rtreeRows === stations && laBox.length > 0
       && coastalBox.length > 0 && oceanLeaks === 0,
   };
@@ -811,7 +866,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   console.log(`  registry rows:     ${result.stations} | rtree in sync: ${result.rtreeInSync}`);
   console.log(`  LA bbox spot-check: ${result.spatialSpotCheck} stations`);
   console.log(`  coastal spot-check: ${result.coastalSpotCheck} stations | ocean leaks: ${result.oceanLeaks}`);
-  console.log(`  Leland ground-truth pins: ${result.groundTruthPins ? `all ${GROUND_TRUTH_PINS.length} anchored exactly (Supercharger Hub 34.2372,-78.0055 · Piggly Wiggly 34.2421,-77.9984)` : 'absent (live registry)'}`);
+  console.log(`  Leland dictionary: ${result.dictionaryBound ? `all ${GROUND_TRUTH_DICTIONARY.length} bindings exact (Smithfield's 34.2372,-78.0055 · Piggly Wiggly 34.2421,-77.9984 · Brunswick Forest 34.1954,-78.0231)` : 'absent (live registry)'} | sector strays: ${result.sectorStrays}`);
   console.log(`  peak heap:         ${result.peakHeapMB} MB | duration: ${result.durationMs} ms`);
   console.log(`  VERIFIED: ${result.verified}`);
 }
