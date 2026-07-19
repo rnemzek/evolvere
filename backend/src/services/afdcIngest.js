@@ -273,37 +273,120 @@ const VENUES = [
 const ACCESS_HOURS = ['24 hours daily', 'Dawn to dusk', 'MON-FRI 7am-9pm', '6am-10pm daily'];
 const STREETS = ['Main St', 'Oak Ave', 'Center Dr', 'Market St', 'Industrial Pkwy', 'Harbor Blvd'];
 
-// UOW-14 Task 14.3: topological clipping gate. The gaussian anchor scatter is
-// direction-blind — a uniform 360° variance around a coastal metro bleeds
-// points into open water (81 Wilmington rows reached the Atlantic, 419 LA rows
-// the Pacific before this gate). Each predicate returns true only for on-land
-// candidates; rejected draws are regenerated from the same deterministic
-// stream, so the seed stays reproducible.
+// UOW-14 Task 14.4: generalized topological clipping. The 14.3 gate only
+// covered two metro anchors; the San Diego anchor and — critically — the I-5
+// corridor scatter (whose SD→LA chord interpolates straight across the
+// Pacific bight off Oceanside) still bled 881 rows into the sea. There was no
+// coordinate sign inversion: gauss() noise is zero-mean and symmetric, so
+// "flipping" its sign is a statistical no-op — the bug was scatter sources
+// with no land predicate at all. This zone engine now gates EVERY generated
+// point (metro and corridor alike).
 //
-// - Wilmington, NC: land ends at the intracoastal waterway (lng -77.82) —
-//   everything east is Atlantic; below lat 34.02 the Cape Fear mouth opens
-//   into open sea.
-// - Los Angeles, CA: land lies strictly northeast of the natural Pacific
-//   shoreline vector from Point Dume (34.00, -118.80) to Newport Beach
-//   (33.60, -117.93); the sign of the 2-D cross product against that vector
-//   decides land vs water (and correctly discards Catalina Island draws).
-const LA_SHORE = { lat: 34.0, lng: -118.8, dLat: -0.4, dLng: 0.87 };
-const COASTAL_CLIPS = {
-  'Wilmington,NC': (lat, lng) => lng <= -77.82 && lat >= 34.02,
-  'Los Angeles,CA': (lat, lng) =>
-    LA_SHORE.dLng * (lat - LA_SHORE.lat) - LA_SHORE.dLat * (lng - LA_SHORE.lng) >= 0,
-};
+// A zone is a bounding box plus either a `test(lat, lng) → on-land` predicate
+// or a `shore` polyline with a `side` (+1 = land where the cross product
+// against the segment direction is positive). Predicates are conservative:
+// over-rejection is safe (the draw simply regenerates on land), so gates hug
+// the waterline from the landward side.
+const COASTAL_ZONES = [
+  { name: 'socal-pacific', box: [31.9, 34.45, -121.5, -117.0], side: 1,
+    shore: [ // Ventura → Point Mugu → Point Dume → Newport → Dana Point → La Jolla → border
+      [34.42, -119.70], [34.27, -119.28], [34.08, -119.04], [34.00, -118.80],
+      [33.60, -117.93], [33.35, -117.55], [32.85, -117.28], [32.53, -117.12],
+    ] },
+  { name: 'sf-pacific', box: [36.8, 38.6, -125.0, -122.35], test: (lat, lng) => lng >= -122.52 },
+  { name: 'puget-sound', box: [46.9, 48.6, -126.0, -122.32], test: (lat, lng) => lng >= -122.45 },
+  { name: 'carolina-atlantic', box: [33.6, 34.6, -78.6, -76.5], test: (lat, lng) => lng <= -77.82 && lat >= 34.02 },
+  { name: 'florida-atlantic', box: [25.0, 30.8, -81.75, -78.6],
+    test: (lat, lng) => lng <= (lat < 27 ? -80.13 : lat < 29 ? -80.55 : -81.35) },
+  { name: 'tampa-gulf', box: [26.2, 28.6, -84.5, -82.5], test: (lat, lng) => lng >= -82.85 },
+  { name: 'charleston-atlantic', box: [32.2, 33.2, -80.4, -78.8], test: (lat, lng) => lng <= -79.82 && lat >= 32.6 },
+  { name: 'ny-bight', box: [40.0, 40.78, -74.3, -72.5], test: (lat) => lat >= 40.52 },
+  { name: 'boston-harbor', box: [41.9, 42.7, -71.2, -69.8], test: (lat, lng) => lng <= -70.99 },
+  { name: 'narragansett-bay', box: [41.2, 41.85, -71.6, -71.0], test: (lat) => lat >= 41.6 },
+  { name: 'casco-bay', box: [43.2, 44.0, -70.6, -69.0], test: (lat, lng) => lng <= -70.22 },
+  // Shore polyline (not a gate): the I-80 Chicago→Toledo chord interpolates
+  // straight across the lake's southern basin, and those water base points
+  // need a shoreline to snap to. Traced N→S down the west shore, around the
+  // southern tip, back up the east shore; land is outside the basin (side -1).
+  { name: 'lake-michigan', box: [41.3, 44.2, -88.1, -86.6], side: -1,
+    shore: [
+      [44.00, -87.65], [43.00, -87.87], [42.60, -87.80], [41.85, -87.60],
+      [41.62, -87.20], [41.75, -86.75], [42.40, -86.35],
+    ] },
+  { name: 'lake-erie', box: [41.55, 42.9, -83.2, -78.9], side: -1,
+    shore: [[41.70, -83.25], [41.50, -81.72], [42.10, -80.10], [42.86, -78.90]] },
+  { name: 'lake-stclair', box: [42.05, 42.75, -82.95, -82.3], test: () => false },
+  { name: 'pontchartrain', box: [30.03, 30.28, -90.5, -89.8], test: () => false },
+  { name: 'galveston-bay', box: [29.3, 29.62, -95.0, -94.4], test: () => false },
+  { name: 'great-salt-lake', box: [40.7, 41.7, -112.9, -112.05], test: () => false },
+];
 
-// Rejection-sample the anchor scatter: redraw until the candidate clears the
-// clip predicate, pinning to the anchor itself (always on land) in the
-// vanishingly unlikely case 40 consecutive draws all land in water.
-function jitterAnchor(rand, lat, lng, sigma, clip) {
-  for (let attempt = 0; attempt < 40; attempt += 1) {
-    const cLat = lat + gauss(rand) * sigma;
-    const cLng = lng + gauss(rand) * sigma * 1.2;
-    if (!clip || clip(cLat, cLng)) return { lat: cLat, lng: cLng };
+function nearestShoreSegment(shore, lat, lng) {
+  let best = null;
+  for (let i = 0; i < shore.length - 1; i += 1) {
+    const [aLat, aLng] = shore[i];
+    const [bLat, bLng] = shore[i + 1];
+    const dLat = bLat - aLat;
+    const dLng = bLng - aLng;
+    const t = Math.max(0, Math.min(1,
+      ((lat - aLat) * dLat + (lng - aLng) * dLng) / (dLat * dLat + dLng * dLng)));
+    const pLat = aLat + t * dLat;
+    const pLng = aLng + t * dLng;
+    const d2 = (lat - pLat) ** 2 + (lng - pLng) ** 2;
+    if (!best || d2 < best.d2) best = { d2, pLat, pLng, aLat, aLng, dLat, dLng };
   }
-  return { lat, lng };
+  return best;
+}
+
+function zoneViolation(lat, lng) {
+  for (const zone of COASTAL_ZONES) {
+    const [s, n, w, e] = zone.box;
+    if (lat < s || lat > n || lng < w || lng > e) continue;
+    if (zone.test) {
+      if (!zone.test(lat, lng)) return zone;
+    } else {
+      const seg = nearestShoreSegment(zone.shore, lat, lng);
+      const cross = seg.dLng * (lat - seg.aLat) - seg.dLat * (lng - seg.aLng);
+      if (zone.side * cross < 0) return zone;
+    }
+  }
+  return null;
+}
+
+export function onLand(lat, lng) {
+  return zoneViolation(lat, lng) === null;
+}
+
+// Deterministic landfall for a base point that is itself in the water (the
+// I-5 SD→LA and I-80 lake-crossing chord cases): project onto the violated
+// zone's shoreline and nudge landward, doubling the nudge depth until the
+// candidate clears every zone — a fixed depth can strand inside concave
+// corner wedges of the polyline. Gate zones fall back to the base point
+// (every corridor chord base inside a gate zone is verified on land).
+function snapLandward(lat, lng) {
+  const zone = zoneViolation(lat, lng);
+  if (!zone?.shore) return { lat, lng };
+  const seg = nearestShoreSegment(zone.shore, lat, lng);
+  const len = Math.hypot(seg.dLat, seg.dLng);
+  for (let depth = 0.03; depth <= 0.5; depth *= 2) {
+    const scale = (depth * zone.side) / len;
+    const cLat = seg.pLat + seg.dLng * scale;
+    const cLng = seg.pLng - seg.dLat * scale;
+    if (onLand(cLat, cLng)) return { lat: cLat, lng: cLng };
+  }
+  return { lat: seg.pLat, lng: seg.pLng };
+}
+
+// Rejection-sample the scatter: redraw until the candidate clears every
+// coastal zone (same deterministic stream, so the seed stays reproducible);
+// after 40 water draws, snap deterministically to the nearest landward point.
+function jitter(rand, lat, lng, sigmaLat, sigmaLng) {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const cLat = lat + gauss(rand) * sigmaLat;
+    const cLng = lng + gauss(rand) * sigmaLng;
+    if (onLand(cLat, cLng)) return { lat: cLat, lng: cLng };
+  }
+  return snapLandward(lat, lng);
 }
 
 // Same deterministic PRNG family as the corridor/tariff seeders.
@@ -354,10 +437,37 @@ function buildSeedRecord(afdcId, anchor, rand) {
   };
 }
 
+// UOW-14 Task 14.4: PO-verified ground-truth pins — validation anchors placed
+// at exact surveyed coordinates with ZERO jitter, so acceptance testing has a
+// fixed landmark to sight against. Ids sit below the generated range
+// (200001+) so scatter allocation can never collide with them.
+const GROUND_TRUTH_PINS = [
+  {
+    id: 199999,
+    station_name: "Smithfield's BBQ Plaza Supercharger - Leland",
+    street_address: 'Waterford Commercial Plaza, Village Rd NE',
+    city: 'Leland',
+    state: 'NC',
+    zip: '28451',
+    latitude: 34.2372,
+    longitude: -78.0055,
+    fuel_type_code: 'ELEC',
+    access_days_time: '24 hours daily',
+    ev_network: 'Tesla',
+    status_code: 'E',
+    ev_dc_fast_num: 12,
+    ev_level2_evse_num: null,
+    ev_connector_types: ['TESLA'],
+    updated_at: '2026-07-18',
+  },
+];
+
 /** Deterministic generator yielding `target` AFDC-shaped records one at a time. */
 function* generateSeedRecords(target) {
-  const corridorCount = Math.round(target * CORRIDOR_SHARE);
-  const metroCount = target - corridorCount;
+  yield* GROUND_TRUTH_PINS;
+  const scattered = target - GROUND_TRUTH_PINS.length;
+  const corridorCount = Math.round(scattered * CORRIDOR_SHARE);
+  const metroCount = scattered - corridorCount;
   const metroWeightTotal = METROS.reduce((a, m) => a + m[4], 0);
   let afdcId = 200001;
 
@@ -367,12 +477,11 @@ function* generateSeedRecords(target) {
       ? metroCount - emitted // last metro absorbs rounding remainder
       : Math.round((weight / metroWeightTotal) * metroCount);
     const sigma = 0.06 + Math.sqrt(weight) * 0.05;
-    const clip = COASTAL_CLIPS[`${city},${state}`];
     for (let i = 0; i < allocation; i += 1) {
       const rand = seededRng(afdcId);
       yield buildSeedRecord(afdcId, {
         city, state,
-        ...jitterAnchor(rand, lat, lng, sigma, clip),
+        ...jitter(rand, lat, lng, sigma, sigma * 1.2),
       }, rand);
       afdcId += 1;
       emitted += 1;
@@ -394,11 +503,13 @@ function* generateSeedRecords(target) {
       const frac = t - seg;
       const a = corridor.waypoints[seg];
       const b = corridor.waypoints[seg + 1];
+      // Corridor chords can cross open water outright (I-5's SD→LA leg cuts
+      // across the Pacific bight), so the base interpolation itself rides
+      // through the same land gate as the jitter.
       yield buildSeedRecord(afdcId, {
         city: null,
         state: (frac < 0.5 ? a : b).state,
-        lat: a.lat + (b.lat - a.lat) * frac + gauss(rand) * 0.08,
-        lng: a.lng + (b.lng - a.lng) * frac + gauss(rand) * 0.08,
+        ...jitter(rand, a.lat + (b.lat - a.lat) * frac, a.lng + (b.lng - a.lng) * frac, 0.08, 0.08),
       }, rand);
       afdcId += 1;
       corridorEmitted += 1;
@@ -456,29 +567,30 @@ function verifyRegistry(rtreeActive) {
   // viewport (PO reference ~34.24, -78.01) must never report empty again —
   // real AFDC data has stations there, and the seed now anchors the metro.
   const coastalBox = queryStationsInBounds({ minLat: 34.0, maxLat: 34.5, minLng: -78.3, maxLng: -77.7 });
-  // UOW-14 Task 14.3: ocean-leak gate — the COASTAL_CLIPS predicates re-run as
-  // SQL over the ingested rows, so a regression in the clipping gate fails
-  // verification. City-scoped on purpose: real AFDC barrier-island stations
-  // (Wrightsville Beach, Carolina Beach) carry their own city names and stay
-  // exempt, while anything filed under the clipped anchor cities must be on
-  // the landward side of its shoreline predicate.
-  const { leaks: ncLeaks } = database
-    .prepare(`SELECT COUNT(*) AS leaks FROM afdc_stations
-              WHERE city = 'Wilmington' AND state = 'NC'
-                AND (longitude > -77.82 OR latitude < 34.02)`)
+  // UOW-14 Task 14.4: ocean-leak gate — every ingested row re-runs through
+  // the exact onLand() zone geometry the generator used, so verification can
+  // never disagree with generation (SQL chord approximations of the shoreline
+  // polylines produced false positives on legitimate near-coast land rows).
+  let oceanLeaks = 0;
+  for (const row of database
+    .prepare('SELECT latitude AS lat, longitude AS lng FROM afdc_stations')
+    .iterate()) {
+    if (!onLand(row.lat, row.lng)) oceanLeaks += 1;
+  }
+  // Reported but NOT gating `verified`: a live NREL ingest legitimately lacks
+  // the synthetic demo pin, and must still verify clean.
+  const { n: pinCount } = database
+    .prepare(`SELECT COUNT(*) AS n FROM afdc_stations
+              WHERE afdc_id = 199999
+                AND ABS(latitude - 34.2372) < 1e-6 AND ABS(longitude + 78.0055) < 1e-6`)
     .get();
-  const { leaks: laLeaks } = database
-    .prepare(`SELECT COUNT(*) AS leaks FROM afdc_stations
-              WHERE city = 'Los Angeles' AND state = 'CA'
-                AND 0.87 * (latitude - 34.0) + 0.4 * (longitude + 118.8) < 0`)
-    .get();
-  const oceanLeaks = ncLeaks + laLeaks;
   return {
     stations,
     rtreeInSync: rtreeRows === stations,
     spatialSpotCheck: laBox.length,
     coastalSpotCheck: coastalBox.length,
     oceanLeaks,
+    groundTruthPin: pinCount === 1,
     verified: stations > 0 && rtreeRows === stations && laBox.length > 0
       && coastalBox.length > 0 && oceanLeaks === 0,
   };
@@ -575,6 +687,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   console.log(`  registry rows:     ${result.stations} | rtree in sync: ${result.rtreeInSync}`);
   console.log(`  LA bbox spot-check: ${result.spatialSpotCheck} stations`);
   console.log(`  coastal spot-check: ${result.coastalSpotCheck} stations | ocean leaks: ${result.oceanLeaks}`);
+  console.log(`  Leland ground-truth pin: ${result.groundTruthPin ? 'anchored at 34.2372, -78.0055' : 'absent (live registry)'}`);
   console.log(`  peak heap:         ${result.peakHeapMB} MB | duration: ${result.durationMs} ms`);
   console.log(`  VERIFIED: ${result.verified}`);
 }

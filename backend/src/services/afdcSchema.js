@@ -26,9 +26,37 @@ import { getDb, DB_FILE } from './chargerDirectory.js';
 
 let migrated = null;
 
+// UOW-14 Task 14.4: bump whenever the seed's coordinate geometry changes.
+// A mismatch forces the destructive wipe below on next boot, so a deployed
+// container (Railway included) shreds every cached stale row and re-ingests
+// with the current topology — exactly once, not on every reboot.
+export const AFDC_SEED_VERSION = 5;
+
 export function ensureAfdcSchema() {
   if (migrated) return migrated;
   const database = getDb();
+
+  // Destructive refresh gate: stale seed geometry cannot survive a deploy.
+  database.exec('CREATE TABLE IF NOT EXISTS afdc_meta (key TEXT PRIMARY KEY, value TEXT)');
+  const versionRow = database
+    .prepare("SELECT value FROM afdc_meta WHERE key = 'seed_version'")
+    .get();
+  if (!versionRow || Number(versionRow.value) !== AFDC_SEED_VERSION) {
+    console.warn(
+      `AFDC schema: seed geometry v${versionRow?.value ?? 'none'} → v${AFDC_SEED_VERSION} — dropping stale registry for full re-ingest`
+    );
+    database.exec(`
+      DROP TRIGGER IF EXISTS afdc_geo_after_insert;
+      DROP TRIGGER IF EXISTS afdc_geo_after_update;
+      DROP TRIGGER IF EXISTS afdc_geo_after_delete;
+      DROP TABLE IF EXISTS afdc_geo;
+      DROP TABLE IF EXISTS afdc_stations;
+    `);
+    database
+      .prepare(`INSERT INTO afdc_meta (key, value) VALUES ('seed_version', ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value`)
+      .run(String(AFDC_SEED_VERSION));
+  }
 
   database.exec(`
     CREATE TABLE IF NOT EXISTS afdc_stations (
