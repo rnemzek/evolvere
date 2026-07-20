@@ -133,18 +133,15 @@ function App() {
   )
 
   return (
-    // UOW-19.6 Task 19.6.2: Clean Mobile Shell Reset — standard document flow
-    // instead of the position:fixed inset-0 shell from UOW-16 Task 16.2
-    // onward. min-h-screen + flex flex-col is the ordinary "full-viewport-tall
-    // column, content areas grow to fill it" pattern; individual scroll
-    // regions (Dashboard/Financials mains, AlertDesk, DiagnosticBrief) bound
-    // themselves locally rather than the shell suppressing scroll globally.
-    // UOW-19.7 Task 19.7.1: `relative` added per this task's literal spec
-    // (StationDrawer's own `absolute` already anchors to the Map view's
-    // `<main className="relative ...">` below, not to this outer wrapper —
-    // this addition is a defensive positioning-context guarantee, not fixing
-    // an observed bug on its own).
-    <div className="relative min-h-screen w-full bg-slate-950 text-slate-100 flex flex-col">
+    // UOW-19.8 Task 19.8.1: w-screen/h-screen/overflow-hidden replaces 19.6's
+    // min-h-screen — on laptop/desktop browsers min-height alone wasn't
+    // reliably giving the flex column (and therefore Leaflet, one level
+    // down) a concrete pixel height at first paint. This is a hard-capped
+    // viewport shell again, but without 19.6's removed position:fixed or any
+    // touch-action override — Dashboard/Financials keep their own internal
+    // overflow-y-auto scroll regions, they just no longer rely on the shell
+    // itself for height resolution. `relative` (from 19.7) kept alongside.
+    <div className="relative w-screen h-screen overflow-hidden bg-slate-950 text-slate-100 flex flex-col">
       <header className="z-[1000] w-full max-w-full left-0 right-0 box-border shrink-0 overflow-x-hidden flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-slate-800 bg-slate-900/85 backdrop-blur">
         <div className="min-w-0">
           <h1 className="text-sm font-bold tracking-widest text-cyan-400 truncate">
@@ -187,58 +184,73 @@ function App() {
         <div className="flex-1 grid place-items-center">
           <p className="text-red-400">Fleet data unavailable: {error}</p>
         </div>
-      ) : view === 'Map' ? (
-        // UOW-19.7 Task 19.7.1: an explicit height, not just flex-1, so
-        // Leaflet's MapContainer (h-full w-full — CommandCenterMap.jsx) has a
-        // concrete pixel value to read the moment it mounts. flex-1's
-        // computed height still resolves correctly under min-h-screen/
-        // flex-col (a standard pattern), but Leaflet measures its container
-        // synchronously on mount and a lazy-loaded chunk resolving mid-layout
-        // was landing on a still-indefinite height often enough to crash.
-        // 64px approximates the masthead's rendered height (py-3 + text).
-        <main className="relative w-full h-[calc(100vh-64px)] flex-1">
-          <ChunkErrorBoundary label="Command map">
-            <Suspense fallback={<MapLoadingFallback />}>
-              <CommandCenterMap stations={stations} onSelectStation={(s) => setSelectedStationId(s.chargerId)} />
-            </Suspense>
-          </ChunkErrorBoundary>
-          <StationDrawer station={selectedStation} onClose={() => setSelectedStationId(null)} />
-        </main>
-      ) : view === 'Financials' ? (
-        <main className="flex-1 max-w-full overflow-y-auto overflow-x-hidden overscroll-contain p-4">
-          <ChunkErrorBoundary label="Financial matrix">
-            <Suspense fallback={<LedgerLoadingFallback />}>
-              <FinancialMatrix />
-            </Suspense>
-          </ChunkErrorBoundary>
-        </main>
       ) : (
-        <main className="flex-1 max-w-full overflow-y-auto overflow-x-hidden overscroll-contain p-4 space-y-4">
-          <KPIStats stations={stations} transactions={transactions} />
-          <ROIPanel stations={stations} />
-          <AlertDesk
-            selectedAlertId={selectedLedgerAlert?.id}
-            onSelectAlert={(alert) => {
-              setSelectedLedgerAlert(alert)
-              setSelectedAlert(null)
-            }}
-          />
-          <DispatchBoard />
-          <div className="grid gap-4 lg:grid-cols-3">
-            <div className="lg:col-span-2">
-              <AlertTable
-                alerts={alerts}
-                briefs={briefs}
-                selectedAlertId={selectedAlert?.id}
+        <>
+          {/* UOW-19.8 Task 19.8.2: the map stays mounted across tab switches
+              instead of unmounting/remounting on the view ternary, so
+              Leaflet's own camera state (center/zoom/pan) survives a
+              Dashboard/Financials round-trip instead of resetting to
+              OC_CENTER/zoom 11 every time. Visibility is a plain block/hidden
+              class swap — a hidden <main> isn't exposed to the a11y tree, so
+              this doesn't create a second visible landmark. `active` tells
+              CommandCenterMap when it's the visible tab so it can
+              invalidateSize() on the hidden→visible transition (a display:
+              none container's Leaflet size goes stale the moment it's
+              hidden). 56px matches the masthead's actual rendered height. */}
+          <main
+            className={`relative w-full h-[calc(100vh-56px)] flex-1 ${view === 'Map' ? 'block' : 'hidden'}`}
+          >
+            <ChunkErrorBoundary label="Command map">
+              <Suspense fallback={<MapLoadingFallback />}>
+                <CommandCenterMap
+                  stations={stations}
+                  onSelectStation={(s) => setSelectedStationId(s.chargerId)}
+                  active={view === 'Map'}
+                />
+              </Suspense>
+            </ChunkErrorBoundary>
+            <StationDrawer station={selectedStation} onClose={() => setSelectedStationId(null)} />
+          </main>
+
+          {view === 'Financials' && (
+            <main className="flex-1 max-w-full overflow-y-auto overflow-x-hidden overscroll-contain p-4">
+              <ChunkErrorBoundary label="Financial matrix">
+                <Suspense fallback={<LedgerLoadingFallback />}>
+                  <FinancialMatrix />
+                </Suspense>
+              </ChunkErrorBoundary>
+            </main>
+          )}
+
+          {view === 'Dashboard' && (
+            <main className="flex-1 max-w-full overflow-y-auto overflow-x-hidden overscroll-contain p-4 space-y-4">
+              <KPIStats stations={stations} transactions={transactions} />
+              <ROIPanel stations={stations} />
+              <AlertDesk
+                selectedAlertId={selectedLedgerAlert?.id}
                 onSelectAlert={(alert) => {
-                  setSelectedAlert(alert)
-                  setSelectedLedgerAlert(null)
+                  setSelectedLedgerAlert(alert)
+                  setSelectedAlert(null)
                 }}
               />
-            </div>
-            <DiagnosticBrief alert={selectedAlert} ledgerAlert={selectedLedgerAlert} briefs={briefs} />
-          </div>
-        </main>
+              <DispatchBoard />
+              <div className="grid gap-4 lg:grid-cols-3">
+                <div className="lg:col-span-2">
+                  <AlertTable
+                    alerts={alerts}
+                    briefs={briefs}
+                    selectedAlertId={selectedAlert?.id}
+                    onSelectAlert={(alert) => {
+                      setSelectedAlert(alert)
+                      setSelectedLedgerAlert(null)
+                    }}
+                  />
+                </div>
+                <DiagnosticBrief alert={selectedAlert} ledgerAlert={selectedLedgerAlert} briefs={briefs} />
+              </div>
+            </main>
+          )}
+        </>
       )}
 
       <ControlPanel

@@ -643,7 +643,7 @@ function MapNavigator({ map }) {
   )
 }
 
-function CommandCenterMap({ stations, onSelectStation }) {
+function CommandCenterMap({ stations, onSelectStation, active = true }) {
   const { topology, directory, environment } = useEnvironment(stations)
   const [layers, setLayers] = useState({
     fleet: true,
@@ -656,6 +656,20 @@ function CommandCenterMap({ stations, onSelectStation }) {
   // Leaflet Map instance for the navigation suite — react-leaflet v5 exposes
   // it via MapContainer ref once the map mounts.
   const [mapInstance, setMapInstance] = useState(null)
+
+  // UOW-19.8 Task 19.8.2: the map now stays mounted across tab switches (see
+  // App.jsx) so Leaflet's own camera state (center/zoom/pan) survives a
+  // Dashboard/Financials round-trip instead of resetting on remount. The
+  // trade-off: Leaflet measures its container on mount but never again on
+  // its own, so a container that was `display:none` while another tab was
+  // active comes back with a stale (often zero) internal size — tiles render
+  // misaligned or blank until something tells it to re-measure.
+  // invalidateSize() on the active:false→true transition is that signal.
+  useEffect(() => {
+    if (active && mapInstance) {
+      mapInstance.invalidateSize()
+    }
+  }, [active, mapInstance])
   // UOW-15 Task 15.4: mobile (<768px) collapses both overlay panels into a
   // slide-in side tray so the touch surface stays clear; md+ ignores this.
   const [trayOpen, setTrayOpen] = useState(false)

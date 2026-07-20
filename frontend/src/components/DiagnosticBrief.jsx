@@ -33,9 +33,11 @@ function DiagnosticBrief({ alert, ledgerAlert, briefs = [] }) {
         </h2>
       </header>
 
-      {/* Task 19.6.3: Clean Mobile Shell Reset — plain overflow-y-auto, no
-          touch-action/inline-style machinery from 19.2-19.5. */}
-      <div className="w-full overflow-y-auto max-h-60 p-4">
+      {/* Task 19.6.3: plain overflow-y-auto, no inline-style machinery from
+          19.2-19.4. Task 19.8.3: touch-auto + overscroll-contain added back
+          explicitly so an edge-of-scroll swipe stops here rather than
+          chaining to the page. */}
+      <div className="w-full overflow-y-auto max-h-60 p-4 touch-auto overscroll-contain">
         {ledgerAlert ? (
           <>
             <p className="text-xs font-mono text-slate-400 mb-3 flex items-center gap-2 flex-wrap">

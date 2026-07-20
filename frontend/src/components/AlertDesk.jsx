@@ -231,17 +231,16 @@ function AlertDesk({ selectedAlertId, onSelectAlert }) {
         )}
       </form>
 
-      {/* Task 19.6.3: Clean Mobile Shell Reset — plain overflow-x-auto/
-          overflow-y-auto, no touch-action/overscroll-contain/inline-style
-          machinery from 19.2-19.5. Horizontal scroll on the ledger table is
-          restored (min-w-[650px] below) since the shell-level touch-action
-          lock that blocked it in 19.5 is gone. Trade-off: no flex-1/min-h-0
-          this round (matching the PO's plain max-h-72 spec exactly) — a
-          short incident list now leaves visible space above the footer
+      {/* Task 19.6.3: plain overflow-x-auto/overflow-y-auto, no inline-style
+          machinery from 19.2-19.4. Horizontal scroll on the ledger table is
+          restored (min-w-[650px] below). Trade-off: no flex-1/min-h-0 —
+          a short incident list can leave visible space above the footer
           inside the section's h-96 shell rather than the region stretching
-          to fill it. No CLS risk (the section's own height never moves),
-          just a look change on sparse ledgers. */}
-      <div className="w-full overflow-x-auto overflow-y-auto max-h-72">
+          to fill it; no CLS risk since the section's own height never moves.
+          Task 19.8.3: touch-auto + overscroll-contain added back explicitly
+          (native browser gesture handling for both axes, edge-of-scroll
+          swipes stop here rather than chaining to the page). */}
+      <div className="w-full overflow-x-auto overflow-y-auto max-h-72 touch-auto overscroll-contain">
         {phase === 'loading' ? (
           <LoadingSkeleton />
         ) : phase === 'error' ? (
