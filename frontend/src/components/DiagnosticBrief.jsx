@@ -33,12 +33,12 @@ function DiagnosticBrief({ alert, ledgerAlert, briefs = [] }) {
         </h2>
       </header>
 
-      {/* Task 19.2.1: long AI brief text (grid-outage messages especially) can
-          run past the panel's natural height — an independent bounded scroll
-          region lets it pan on its own without the swipe escaping to drag the
-          fixed-shell page underneath. -webkit-overflow-scrolling:touch keeps
-          the scroll momentum-smooth on iOS Safari specifically. */}
-      <div className="p-4 overflow-y-auto max-h-[280px] touch-auto [-webkit-overflow-scrolling:touch]">
+      {/* Task 19.3.2: touch-pan-y (single axis, this panel only ever scrolls
+          vertically) + overscroll-contain stops the swipe from chaining into
+          the fixed-shell page once the text hits its top/bottom edge —
+          same WebKit-safe axis-locked approach as the Alert Desk split in
+          19.3.1, just single-axis here since there's no horizontal content. */}
+      <div className="p-4 w-full max-h-[250px] overflow-y-auto overscroll-contain touch-pan-y [-webkit-overflow-scrolling:touch]">
         {ledgerAlert ? (
           <>
             <p className="text-xs font-mono text-slate-400 mb-3 flex items-center gap-2 flex-wrap">

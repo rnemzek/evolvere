@@ -231,20 +231,21 @@ function AlertDesk({ selectedAlertId, onSelectAlert }) {
         )}
       </form>
 
-      {/* scrollbar-gutter reserves the rail even while content fits, so an
-          eviction that drops the list below the overflow threshold never
-          reflows the table width when the scrollbar vanishes. Task 19.2.1:
-          touch-auto (touch-action: auto) hands both axes to the browser's
-          native scroll handling instead of the touch-pan-x/touch-pan-y
-          composition from 19.1.1 — same independent 2-axis result, browser-
-          native rather than hand-composed. max-h-[320px] bounds the region
-          explicitly (the flex-1 parent's h-96 shell already constrains it
-          similarly) and -webkit-overflow-scrolling:touch keeps iOS Safari's
-          scroll momentum smooth. This still nests safely inside the UOW-18
-          root viewport lock: the lock only forbids the DOCUMENT (html/body)
-          from scrolling — a bounded descendant's own overflow region is
-          exactly the escape valve fixed-shell layouts are supposed to use. */}
-      <div className="flex-1 min-h-0 w-full max-h-[320px] overflow-y-auto overflow-x-auto touch-auto [-webkit-overflow-scrolling:touch] [scrollbar-gutter:stable]">
+      {/* Task 19.3.1: a single element combining pan-x + pan-y (touch-auto or
+          hand-composed touch-pan-x/touch-pan-y) is exactly where iOS WebKit
+          has a known history of dropping one axis under real-device gesture
+          recognition — splitting into two nested, axis-locked scroll regions
+          sidesteps that class of bug entirely: WebKit only ever has to
+          resolve ONE axis per element. overscroll-contain on both stops
+          scroll chaining from either axis bleeding into the page shell once
+          a region hits its edge. scrollbar-gutter stays on the outer
+          (vertical) wrapper, matching where the visible scrollbar rail is.
+          flex-1 min-h-0 (kept alongside the PO's literal class list): without
+          it this wrapper reverts to content-height, and a short incident
+          list would leave a blank gap above the footer inside the fixed
+          h-96 shell — breaking the desk's documented CLS-isolation contract. */}
+      <div className="flex-1 min-h-0 w-full max-h-[300px] overflow-y-auto overscroll-contain touch-pan-y [-webkit-overflow-scrolling:touch] [scrollbar-gutter:stable]">
+        <div className="w-full min-w-full overflow-x-auto overscroll-contain touch-pan-x">
         {phase === 'loading' ? (
           <LoadingSkeleton />
         ) : phase === 'error' ? (
@@ -338,6 +339,7 @@ function AlertDesk({ selectedAlertId, onSelectAlert }) {
             </tbody>
           </table>
         )}
+        </div>
       </div>
 
       <footer className="shrink-0 flex items-center justify-between gap-3 px-4 py-2 border-t border-slate-800 text-xs text-slate-400 tabular-nums">
