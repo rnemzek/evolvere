@@ -6,7 +6,8 @@
   "main": "src/server.js",
   "scripts": {
     "dev": "node --watch src/server.js",
-    "start": "node src/server.js"
+    "start": "node src/server.js",
+    "geocode": "node scripts/geocodeStations.js"
   },
   "dependencies": {
     "compression": "^1.8.1",

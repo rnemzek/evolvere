@@ -370,9 +370,10 @@ const stationStateLabel = (station) => {
 
 function clusterIcon(cluster) {
   const sagging = cluster.sagCount > 0
-  // UOW-15 Task 15.5: clusters containing a ground-truth validation anchor
-  // take the neon fuchsia treatment so the anchors read from any zoom.
-  const anchored = cluster.groundTruthCount > 0
+  // UOW-21: clusters holding at least one geocoding-cleanse-verified station
+  // take the neon fuchsia treatment so high-precision coverage reads from
+  // any zoom (previously keyed off a five-station hardcoded dictionary).
+  const highPrecision = cluster.highPrecisionCount > 0
   // Screen readers get the full telemetry sentence; the visual bubble shows
   // only the compact count. Enter/Space activate via Leaflet marker keyboard
   // support on the focusable wrapper.
@@ -382,25 +383,27 @@ function clusterIcon(cluster) {
   const detail = [
     cluster.sagCount > 0 ? `${cluster.sagCount} offline` : null,
     cluster.plannedCount > 0 ? `${cluster.plannedCount} planned` : null,
-    anchored ? `${cluster.groundTruthCount} ground-truth anchors` : null,
+    highPrecision ? `${cluster.highPrecisionCount} high-precision geocoded` : null,
   ].filter(Boolean).join(', ')
   const srLabel = detail
     ? `Cluster of ${cluster.count} national stations, ${detail} — activate to zoom in`
     : `Cluster of ${cluster.count} national stations, all open — activate to zoom in`
   return L.divIcon({
     className: '',
-    html: `<div class="national-cluster${sagging ? ' sagging' : ''}${anchored ? ' has-ground-truth' : ''}" role="img" aria-label="${srLabel}">${formatCount(cluster.count)}</div>`,
+    html: `<div class="national-cluster${sagging ? ' sagging' : ''}${highPrecision ? ' has-ground-truth' : ''}" role="img" aria-label="${srLabel}">${formatCount(cluster.count)}</div>`,
     iconSize: [40, 40],
     iconAnchor: [20, 20],
   })
 }
 
-// UOW-15 Task 15.5: neon fuchsia beacon for dictionary-anchored ground-truth
-// stations — pulsing halo + rimmed core, unmistakable against the dark tiles.
-function groundTruthIcon(station) {
+// UOW-21: neon fuchsia beacon for stations the geocoding-cleanse pipeline has
+// resolved to a verified rooftop coordinate — pulsing halo + rimmed core,
+// unmistakable against the dark tiles. Any station in the fleet can earn
+// this once geocoded; it's no longer reserved for a hardcoded id set.
+function highPrecisionIcon(station) {
   return L.divIcon({
     className: '',
-    html: `<div class="ground-truth-marker" role="img" aria-label="Ground-truth validation anchor: ${station.name}"><span class="halo"></span><span class="core"></span></div>`,
+    html: `<div class="ground-truth-marker" role="img" aria-label="High-precision geocoded station: ${station.name}"><span class="halo"></span><span class="core"></span></div>`,
     iconSize: [44, 44],
     iconAnchor: [22, 22],
   })
@@ -477,22 +480,22 @@ function NationalFleetLayer({ onViewportTotal }) {
 
   // Pin palette: teal = open, amber = genuinely offline, planned sites render
   // as neutral slate-blue blueprint outlines (dashed, low fill) so a future
-  // build-out never reads as an active system failure, and ground-truth
-  // dictionary anchors render as neon fuchsia beacons (Task 15.5).
-  return payload.stations.map((station) => station.isGroundTruth ? (
+  // build-out never reads as an active system failure, and geocoding-cleanse
+  // verified stations render as neon fuchsia beacons (UOW-21).
+  return payload.stations.map((station) => station.isHighPrecision ? (
     <Marker
       key={station.stationId}
       position={[station.latitude, station.longitude]}
-      icon={groundTruthIcon(station)}
+      icon={highPrecisionIcon(station)}
       keyboard={true}
-      alt={`Ground-truth validation anchor: ${station.name}`}
+      alt={`High-precision geocoded station: ${station.name}`}
       eventHandlers={tapOpenTooltip}
     >
       <Tooltip direction="top" offset={[0, -14]} opacity={1} className="charger-tooltip">
         <div className="space-y-1">
           <p className="text-sm font-semibold text-zinc-100">{station.name}</p>
           <p className="text-[10px] font-bold uppercase tracking-widest text-fuchsia-300">
-            ◆ Ground-Truth Anchor
+            ◆ Rooftop-Interpolated
           </p>
           <p className="font-mono text-xs text-zinc-300">
             {station.stationId} · {station.state ?? '—'} ·{' '}

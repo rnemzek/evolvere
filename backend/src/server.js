@@ -1,4 +1,4 @@
-// UOW-19.8 deploy trigger
+// UOW-21 deploy trigger
 import express from 'express';
 import cors from 'cors';
 import compression from 'compression';
@@ -30,7 +30,7 @@ import { getRoiAnalytics } from './services/analyticsService.js';
 import { getFinancialMatrix, initTariffEngine } from './services/tariffEngine.js';
 import { initNationalIngestion, getSpatialClusters } from './services/dataIngestionService.js';
 import { ensureAfdcSchema } from './services/afdcSchema.js';
-import { initAfdcIngestion, getRegistryProfile, locateRegistry } from './services/afdcIngest.js';
+import { initAfdcIngestion, getRegistryProfile, locateRegistry, backfillGeocodePrecision } from './services/afdcIngest.js';
 import { ensureAlertSchema, onIncidentEvent, raiseAlert, clearAlerts, listOpenLedger } from './services/alertManager.js';
 import { initGridOutages, listGridOutages, syncGridOutages } from './services/gridOutageService.js';
 import { ensureWorkQueueSchema, listTasks, getQueueSummary, markDispatched } from './services/workQueueService.js';
@@ -607,6 +607,15 @@ const afdcBoot = await initAfdcIngestion();
 console.log(
   `[boot] AFDC registry: ${afdcBoot.stations ?? afdcBoot.ingested} stations | source: ${afdcBoot.source} | verified: ${afdcBoot.verified}`
 );
+// UOW-21: bounded geocoding-cleanse pass — picks up wherever the last boot
+// left off (afdc_id order), so precision_score coverage climbs a little on
+// every restart without blocking startup on the full fleet's 1 req/sec
+// rate limit. Non-fatal: a network hiccup here should never crash boot.
+backfillGeocodePrecision()
+  .then((result) =>
+    console.log(`[boot] geocoding-cleanse pass: ${result.geocoded}/${result.attempted} stations resolved to ROOFTOP_INTERPOLATED`)
+  )
+  .catch((err) => console.warn(`[boot] geocoding-cleanse pass failed (non-fatal): ${err.message}`));
 ensureSpatialCorrectionsSchema();
 startSpatialReconciliation();
 ensureAlertSchema();

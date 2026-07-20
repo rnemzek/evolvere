@@ -56,7 +56,15 @@ let migrated = null;
 // crosshair coordinate; the PO's 18.2 sheet still lists the earlier Olde
 // Regent Way estimate for it, but regressing a verified survey fix would be
 // a step backward, not a correction.
-export const AFDC_SEED_VERSION = 12;
+// v13 (UOW-21): the static GROUND_TRUTH_DICTIONARY special-case is retired.
+// Every station — Leland sector included — now derives its coordinate through
+// the same uniform ingest-time geocoding-cleanse pipeline (afdcIngest.js's
+// backfillGeocodePrecision, backed by geocodeEngine.js's tiered Census ->
+// Nominatim lookup). The new `precision_score` column ('ROOFTOP_INTERPOLATED'
+// once a real geocoder hit lands, NULL until then) replaces the dictionary's
+// hardcoded-anchor concept: precision is now a property any station in the
+// fleet can earn, not a privilege reserved for five hand-picked ids.
+export const AFDC_SEED_VERSION = 13;
 
 export function ensureAfdcSchema() {
   if (migrated) return migrated;
@@ -103,7 +111,8 @@ export function ensureAfdcSchema() {
       ev_dc_fast_num   INTEGER,              -- DC fast port count
       ev_level2_num    INTEGER,              -- Level-2 port count
       updated_at       TEXT,                 -- AFDC record freshness stamp
-      synced_at        TEXT NOT NULL
+      synced_at        TEXT NOT NULL,
+      precision_score  TEXT                  -- NULL | 'ROOFTOP_INTERPOLATED' (UOW-21 geocode-cleanse tag)
     );
     CREATE INDEX IF NOT EXISTS idx_afdc_state ON afdc_stations (state);
   `);

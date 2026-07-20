@@ -1,9 +1,6 @@
 import { getDb } from './chargerDirectory.js';
 import { ensureFinancialSchema } from './tariffEngine.js';
 import { boundsQueryParts } from './afdcSchema.js';
-// Benign ESM cycle (afdcIngest imports CORRIDORS from here): both bindings
-// are dereferenced only at call time, never during module evaluation.
-import { GROUND_TRUTH_IDS } from './afdcIngest.js';
 import { ensureSpatialCorrectionsSchema } from './spatialCorrections.js';
 
 // National ingestion pipe (UOW-09 Task 9.1): pages and caches up to
@@ -341,7 +338,7 @@ export function getSpatialClusters({ minLat, maxLat, minLng, maxLng, zoom }) {
     const centerLat = (minLat + maxLat) / 2;
     const centerLng = (minLng + maxLng) / 2;
     const rows = database
-      .prepare(`SELECT s.afdc_id, s.station_name, s.state, s.ev_network, s.status_code,
+      .prepare(`SELECT s.afdc_id, s.station_name, s.state, s.ev_network, s.status_code, s.precision_score,
                        COALESCE(c.corrected_lat, s.latitude) AS latitude,
                        COALESCE(c.corrected_lng, s.longitude) AS longitude
                 FROM afdc_stations s ${join} ${CORRECTIONS_JOIN} WHERE ${where}
@@ -363,8 +360,10 @@ export function getSpatialClusters({ minLat, maxLat, minLng, maxLng, zoom }) {
         longitude: r.longitude,
         isPlanned: r.status_code === 'P',
         activeGridSag: r.status_code != null && r.status_code !== 'E' && r.status_code !== 'P',
-        // UOW-15 Task 15.5: dictionary anchors render as neon validation pins.
-        isGroundTruth: GROUND_TRUTH_IDS.has(r.afdc_id),
+        // UOW-21: high-precision beacons now render off the geocoding-cleanse
+        // pipeline's precision_score rather than a hardcoded id set — any
+        // station in the fleet can earn the neon treatment, not just five.
+        isHighPrecision: r.precision_score === 'ROOFTOP_INTERPOLATED',
       })),
     };
   }
@@ -372,10 +371,12 @@ export function getSpatialClusters({ minLat, maxLat, minLng, maxLng, zoom }) {
   // Grid buckets sized off the slippy-tile pyramid: each tile axis splits into
   // CELLS_PER_TILE_AXIS cells, so cluster granularity tracks the zoom level.
   const cellDeg = 360 / (2 ** zoom * CELLS_PER_TILE_AXIS);
-  // UOW-15 Task 15.5: dictionary ids are a tiny static set, so inlining them
-  // keeps the aggregate one pass; clusters holding a ground-truth anchor get
-  // a neon treatment so the anchors stay locatable even when panned out.
-  const GROUND_TRUTH = `CASE WHEN s.afdc_id IN (${[...GROUND_TRUTH_IDS].join(',')}) THEN 1 ELSE 0 END`;
+  // UOW-21: clusters holding at least one geocoding-cleanse-verified station
+  // (precision_score = 'ROOFTOP_INTERPOLATED') get the neon treatment so
+  // high-precision coverage stays visible even when panned out — the same
+  // visual signal as before, now driven by real geocoded coverage instead of
+  // a five-station hardcoded set.
+  const HIGH_PRECISION = "CASE WHEN s.precision_score = 'ROOFTOP_INTERPOLATED' THEN 1 ELSE 0 END";
   const CORRECTED_LAT = 'COALESCE(c.corrected_lat, s.latitude)';
   const CORRECTED_LNG = 'COALESCE(c.corrected_lng, s.longitude)';
   const rows = database
@@ -386,7 +387,7 @@ export function getSpatialClusters({ minLat, maxLat, minLng, maxLng, zoom }) {
                      AVG(${CORRECTED_LNG}) AS lng,
                      SUM(${ATTENTION}) AS attention,
                      SUM(${PLANNED}) AS planned,
-                     SUM(${GROUND_TRUTH}) AS groundTruth
+                     SUM(${HIGH_PRECISION}) AS highPrecision
               FROM afdc_stations s ${join} ${CORRECTIONS_JOIN} WHERE ${where}
               GROUP BY ci, cj`)
     .all(cellDeg, cellDeg, ...params);
@@ -403,7 +404,7 @@ export function getSpatialClusters({ minLat, maxLat, minLng, maxLng, zoom }) {
       count: r.n,
       sagCount: r.attention,
       plannedCount: r.planned,
-      groundTruthCount: r.groundTruth,
+      highPrecisionCount: r.highPrecision,
       latitude: Math.round(r.lat * 1e5) / 1e5,
       longitude: Math.round(r.lng * 1e5) / 1e5,
     })),

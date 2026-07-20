@@ -12,6 +12,7 @@ import { streamArray } from 'stream-json/streamers/stream-array.js';
 import { getDb } from './chargerDirectory.js';
 import { ensureAfdcSchema, queryStationsInBounds, AFDC_SEED_VERSION } from './afdcSchema.js';
 import { CORRIDORS } from './dataIngestionService.js';
+import { geocodeStationAddress } from './geocodeEngine.js';
 
 // UOW-11 Task 11.2: bulk NREL AFDC ingestion pipeline. The registry payload
 // (~75,000 US public ELEC stations) never materializes in memory — the source
@@ -101,7 +102,8 @@ const UPSERT_SQL = `
     ev_dc_fast_num = excluded.ev_dc_fast_num,
     ev_level2_num = excluded.ev_level2_num,
     updated_at = excluded.updated_at,
-    synced_at = excluded.synced_at
+    synced_at = excluded.synced_at,
+    precision_score = NULL
 `;
 
 /**
@@ -378,17 +380,14 @@ function snapLandward(lat, lng) {
 }
 
 // Rejection-sample the scatter: redraw until the candidate clears every
-// coastal zone AND stays out of the dictionary-owned ground-truth sector
-// (same deterministic stream, so the seed stays reproducible); after 40
-// rejected draws, snap deterministically to the nearest landward point.
-// UOW-15 Task 15.3: the sector exclusion is what "completely disables" the
-// procedural generator for the Wilmington/Leland coordinates — a Wilmington
-// metro draw that lands in the sector regenerates outside it instead.
+// coastal zone (same deterministic stream, so the seed stays reproducible);
+// after 40 rejected draws, snap deterministically to the nearest landward
+// point.
 function jitter(rand, lat, lng, sigmaLat, sigmaLng) {
   for (let attempt = 0; attempt < 40; attempt += 1) {
     const cLat = lat + gauss(rand) * sigmaLat;
     const cLng = lng + gauss(rand) * sigmaLng;
-    if (onLand(cLat, cLng) && !inGroundTruthSector(cLat, cLng)) return { lat: cLat, lng: cLng };
+    if (onLand(cLat, cLng)) return { lat: cLat, lng: cLng };
   }
   return snapLandward(lat, lng);
 }
@@ -441,150 +440,17 @@ function buildSeedRecord(afdcId, anchor, rand) {
   };
 }
 
-// UOW-15 Task 15.3/15.5: static ground-truth data dictionary — the sole
-// authority for the Wilmington/Leland UAT sector. 15.3 dismantled the v6
-// label↔coordinate cross-wire; 15.5 corrects the PO-caught sequential
-// mapping slip (real-world AFDC-199997 belongs exclusively to the Piggly
-// Wiggly on 112 Village Rd NE, so Smithfield's moves to the discrete 199996).
-// The dictionary binds label → coordinate → network → status explicitly, one
-// record per line of the PO's surveyed sheet:
-//   AFDC-199996  Leland Supercharger Hub (Smithfield's)  34.217440, -78.018444
-//   AFDC-199997  Piggly Wiggly Infrastructure Node       34.2421, -77.9984
-//   AFDC-199999  The Villages at Brunswick Forest        34.1954, -78.0231
-// 15.6 (UAT offset): the Smithfield's beacon sat on the "Leland" map label at
-// the US-74 junction and was shifted to the Olde Regent Way plaza estimate.
-// 16.4 (crosshair fix): the Diagnostic Reference Pin measured the true
-// commercial retail plaza parking lot at exactly 34.217440/-78.018444 —
-// dictionary snapped to the surveyed crosshair signature, seed v11.
-// 18.2 (UAT Leland spike, seed v12): two more surveyed sites join the sector —
-//   AFDC-199994  Blink Charging (Ocean Hwy E)     34.2125, -78.0110
-//   AFDC-199993  EnviroSpark Charging (Belville)  34.2310, -77.9890
-// AFDC-199996's coordinate is NOT reset here — the 16.4 crosshair survey
-// (34.217440/-78.018444) stays authoritative over the earlier Olde Regent Way
-// plaza estimate the PO's 18.2 sheet still carries; regressing it would undo
-// a verified fix. The corresponding UAT_MANUAL row in station_spatial_corrections
-// (spatialCorrections.js) is likewise skipped for 199996 for the same reason.
-// These records are yielded verbatim ahead of the scatter loops: they never
-// enter jitter(), gauss(), or any other randomized noise path, and the
-// GROUND_TRUTH_SECTOR exclusion below bars procedural records from the sector
-// entirely, so no generated metadata can ever cross-wire onto real Leland
-// coordinates again. Ids sit below the generated range (200001+) so scatter
-// allocation can never collide with them.
-const GROUND_TRUTH_DICTIONARY = [
-  {
-    id: 199996,
-    station_name: "Leland Supercharger Hub (Smithfield's BBQ Plaza)",
-    street_address: 'Olde Regent Way',
-    city: 'Leland',
-    state: 'NC',
-    zip: '28451',
-    latitude: 34.21744,
-    longitude: -78.018444,
-    fuel_type_code: 'ELEC',
-    access_days_time: '24 hours daily',
-    ev_network: 'Tesla',
-    status_code: 'E', // OPEN
-    ev_dc_fast_num: 12,
-    ev_level2_evse_num: null,
-    ev_connector_types: ['TESLA'],
-    updated_at: '2026-07-19',
-  },
-  {
-    id: 199997,
-    station_name: 'Piggly Wiggly Infrastructure Node',
-    street_address: '112 Village Rd NE',
-    city: 'Leland',
-    state: 'NC',
-    zip: '28451',
-    latitude: 34.2421,
-    longitude: -77.9984,
-    fuel_type_code: 'ELEC',
-    access_days_time: '24 hours daily',
-    ev_network: 'ChargePoint Network',
-    status_code: 'E', // OPEN
-    ev_dc_fast_num: null,
-    ev_level2_evse_num: 4,
-    ev_connector_types: ['J1772'],
-    updated_at: '2026-07-19',
-  },
-  {
-    id: 199999,
-    station_name: 'The Villages at Brunswick Forest (ChargePoint)',
-    street_address: 'The Villages Town Center, Brunswick Forest Pkwy',
-    city: 'Leland',
-    state: 'NC',
-    zip: '28451',
-    latitude: 34.1954,
-    longitude: -78.0231,
-    fuel_type_code: 'ELEC',
-    access_days_time: '24 hours daily',
-    ev_network: 'ChargePoint Network',
-    status_code: 'E', // OPEN
-    ev_dc_fast_num: null,
-    ev_level2_evse_num: 2,
-    ev_connector_types: ['J1772'],
-    updated_at: '2026-07-19',
-  },
-  {
-    id: 199994,
-    station_name: 'Blink Charging (Ocean Hwy E)',
-    street_address: 'Ocean Hwy E',
-    city: 'Leland',
-    state: 'NC',
-    zip: '28451',
-    latitude: 34.2125,
-    longitude: -78.011,
-    fuel_type_code: 'ELEC',
-    access_days_time: '24 hours daily',
-    ev_network: 'Blink Network',
-    status_code: 'E', // OPEN
-    ev_dc_fast_num: null,
-    ev_level2_evse_num: 6,
-    ev_connector_types: ['J1772'],
-    updated_at: '2026-07-20',
-  },
-  {
-    id: 199993,
-    station_name: 'EnviroSpark Charging (Belville)',
-    street_address: 'Hwy 74',
-    city: 'Belville',
-    state: 'NC',
-    zip: '28451',
-    latitude: 34.231,
-    longitude: -77.989,
-    fuel_type_code: 'ELEC',
-    access_days_time: '24 hours daily',
-    ev_network: 'Non-Networked',
-    status_code: 'E', // OPEN
-    ev_dc_fast_num: null,
-    ev_level2_evse_num: 4,
-    ev_connector_types: ['J1772'],
-    updated_at: '2026-07-20',
-  },
-];
-
-// UOW-15 Task 15.5: dictionary id set for wire-level flagging — the spatial
-// cluster engine marks these rows isGroundTruth so the frontend can render
-// them with unmistakable neon accents. (dataIngestionService imports this,
-// completing a benign ESM cycle with the CORRIDORS import above: both
-// bindings are only dereferenced at call time, never during module load.)
-export const GROUND_TRUTH_IDS = new Set(GROUND_TRUTH_DICTIONARY.map((r) => r.id));
-
-// Dictionary-owned sector: a bounding box around the Leland UAT neighborhood.
-// The procedural metadata generator is fully disabled inside it — jitter()
-// rejects any candidate landing here exactly as it rejects water, so the only
-// rows that can exist in the sector are the dictionary bindings above.
-const GROUND_TRUTH_SECTOR = [34.17, 34.27, -78.06, -77.97]; // [S, N, W, E]
-
-function inGroundTruthSector(lat, lng) {
-  const [s, n, w, e] = GROUND_TRUTH_SECTOR;
-  return lat >= s && lat <= n && lng >= w && lng <= e;
-}
-
-/** Deterministic generator yielding `target` AFDC-shaped records one at a time. */
+/**
+ * Deterministic generator yielding `target` AFDC-shaped records one at a
+ * time. UOW-21: the former static GROUND_TRUTH_DICTIONARY special-case
+ * (five hardcoded Leland-sector anchors) is retired — every station,
+ * Leland included, is now a plain scatter-generated (or live-AFDC) record
+ * whose coordinate precision comes from the ingest-time geocoding-cleanse
+ * pipeline (backfillGeocodePrecision, below) rather than a hand-surveyed
+ * constant.
+ */
 function* generateSeedRecords(target) {
-  yield* GROUND_TRUTH_DICTIONARY;
-  const scattered = target - GROUND_TRUTH_DICTIONARY.length;
+  const scattered = target;
   const corridorCount = Math.round(scattered * CORRIDOR_SHARE);
   const metroCount = scattered - corridorCount;
   const metroWeightTotal = METROS.reduce((a, m) => a + m[4], 0);
@@ -696,38 +562,20 @@ function verifyRegistry(rtreeActive) {
     .iterate()) {
     if (!onLand(row.lat, row.lng)) oceanLeaks += 1;
   }
-  // Reported but NOT gating `verified`: a live NREL ingest legitimately lacks
-  // the synthetic dictionary rows, and must still verify clean.
-  // UOW-15 Task 15.3: the check now asserts the FULL binding — id, exact
-  // coordinate, label, network, and status together — derived from the same
-  // GROUND_TRUTH_DICTIONARY the generator yields, so the exact cross-wire UAT
-  // caught (right coordinates under the wrong label) can never verify green.
-  const bindingStmt = database
-    .prepare(`SELECT COUNT(*) AS n FROM afdc_stations
-              WHERE afdc_id = ? AND ABS(latitude - ?) < 1e-6 AND ABS(longitude - ?) < 1e-6
-                AND station_name = ? AND ev_network = ? AND status_code = ?`);
-  const dictionaryBound = GROUND_TRUTH_DICTIONARY.every(
-    (rec) => bindingStmt
-      .get(rec.id, rec.latitude, rec.longitude, rec.station_name, rec.ev_network, rec.status_code)
-      .n === 1
-  );
-  // Sector purity: no procedurally generated row may exist inside the
-  // dictionary-owned Leland box (live NREL data legitimately has other real
-  // stations there, so this is reported, not gating).
-  const [secS, secN, secW, secE] = GROUND_TRUTH_SECTOR;
-  const { n: sectorStrays } = database
-    .prepare(`SELECT COUNT(*) AS n FROM afdc_stations
-              WHERE latitude BETWEEN ? AND ? AND longitude BETWEEN ? AND ?
-                AND afdc_id NOT IN (${GROUND_TRUTH_DICTIONARY.map((r) => r.id).join(',')})`)
-    .get(secS, secN, secW, secE);
+  // UOW-21: precision coverage — how many rows the geocoding-cleanse
+  // pipeline has already resolved to a real rooftop coordinate. Reported,
+  // not gating: this climbs progressively via backfillGeocodePrecision()
+  // rather than completing during any single ingest pass.
+  const { n: precisionCoverage } = database
+    .prepare("SELECT COUNT(*) AS n FROM afdc_stations WHERE precision_score = 'ROOFTOP_INTERPOLATED'")
+    .get();
   return {
     stations,
     rtreeInSync: rtreeRows === stations,
     spatialSpotCheck: laBox.length,
     coastalSpotCheck: coastalBox.length,
     oceanLeaks,
-    dictionaryBound,
-    sectorStrays,
+    precisionCoverage,
     verified: stations > 0 && rtreeRows === stations && laBox.length > 0
       && coastalBox.length > 0 && oceanLeaks === 0,
   };
@@ -857,7 +705,7 @@ export async function ingestAfdcRegistry({ target = AFDC_TARGET } = {}) {
   // registry tables, so the cached snapshot on disk holds the SAME stale
   // geometry the wipe exists to shred — purge it too, or the tier-2 fallback
   // would faithfully re-ingest every pre-v6 ocean/lake row and boot without
-  // the current ground-truth anchors.
+  // the current schema (precision_score included).
   if (wiped) {
     for (const stale of [SNAPSHOT_RAW, SNAPSHOT_GZ]) {
       if (existsSync(stale)) {
@@ -913,6 +761,46 @@ export async function initAfdcIngestion() {
   return result;
 }
 
+const GEOCODE_BOOT_BATCH = Number(process.env.GEOCODE_BOOT_BATCH) || 25;
+
+/**
+ * UOW-21: bounded, resumable geocoding-cleanse pass — the ingest pipeline's
+ * inline integration of the high-precision geocoding engine. Shares
+ * geocodeEngine.js with the standalone backfill script
+ * (backend/scripts/geocodeStations.js), so a station's coordinate always
+ * resolves through the exact same tiered Census -> Nominatim lookup no
+ * matter which caller triggered it — one uniform code path, no per-station
+ * special-casing.
+ *
+ * Bounded to `limit` rows per call rather than run fleet-wide inline: the
+ * shared 1 req/sec throttle would take ~21 hours across the full 75k-row
+ * registry, which cannot block server startup. This picks up the oldest
+ * un-geocoded rows (afdc_id order) a small slice at a time on every boot, so
+ * coverage climbs progressively without ever stalling the app. For a larger
+ * or specifically-scoped batch (e.g. one ZIP code, or an overnight full-fleet
+ * run), invoke backend/scripts/geocodeStations.js directly.
+ */
+export async function backfillGeocodePrecision({ limit = GEOCODE_BOOT_BATCH } = {}) {
+  ensureAfdcSchema();
+  const database = getDb();
+  const targets = database
+    .prepare('SELECT * FROM afdc_stations WHERE precision_score IS NULL ORDER BY afdc_id LIMIT ?')
+    .all(limit);
+  if (targets.length === 0) return { attempted: 0, geocoded: 0 };
+
+  const update = database.prepare(
+    'UPDATE afdc_stations SET latitude = ?, longitude = ?, precision_score = ? WHERE afdc_id = ?'
+  );
+  let geocoded = 0;
+  for (const station of targets) {
+    const result = await geocodeStationAddress(station);
+    if (!result) continue;
+    update.run(result.lat, result.lng, result.precisionScore, station.afdc_id);
+    geocoded += 1;
+  }
+  return { attempted: targets.length, geocoded };
+}
+
 // Standalone runner: `node src/services/afdcIngest.js`
 if (import.meta.url === `file://${process.argv[1]}`) {
   const result = await ingestAfdcRegistry();
@@ -923,7 +811,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   console.log(`  registry rows:     ${result.stations} | rtree in sync: ${result.rtreeInSync}`);
   console.log(`  LA bbox spot-check: ${result.spatialSpotCheck} stations`);
   console.log(`  coastal spot-check: ${result.coastalSpotCheck} stations | ocean leaks: ${result.oceanLeaks}`);
-  console.log(`  Leland dictionary: ${result.dictionaryBound ? `all ${GROUND_TRUTH_DICTIONARY.length} bindings exact (199996 Smithfield's 34.217440,-78.018444 · 199997 Piggly Wiggly 34.2421,-77.9984 · 199999 Brunswick Forest 34.1954,-78.0231 · 199994 Blink Charging 34.2125,-78.0110 · 199993 EnviroSpark 34.2310,-77.9890)` : 'absent (live registry)'} | sector strays: ${result.sectorStrays}`);
+  console.log(`  precision coverage: ${result.precisionCoverage} / ${result.stations} stations ROOFTOP_INTERPOLATED`);
   console.log(`  peak heap:         ${result.peakHeapMB} MB | duration: ${result.durationMs} ms`);
   console.log(`  VERIFIED: ${result.verified}`);
 }

@@ -84,30 +84,13 @@ export function listCorrections() {
     .map(rowToCorrection);
 }
 
-// UOW-18 Task 18.2: hardcoded ground-truth baseline for the Leland UAT sector
-// spike — surveyed street coordinates, entered with explicit 'UAT_MANUAL'
-// provenance rather than the geocoder source tag. applyCorrection() upserts,
-// so re-running this at every boot is a no-op once written.
-//
-// AFDC-199996 (Tesla Supercharger / Smithfield's) is deliberately NOT
-// included: UOW-16 Task 16.4 already crosshair-surveyed it to a more precise
-// 34.217440/-78.018444 and marked it VERIFIED. The PO's 18.2 survey sheet
-// still carries the earlier Olde Regent Way estimate (34.2185/-78.0145) for
-// that same station — seeding it here would silently regress a verified fix
-// via the COALESCE override, so it's skipped rather than applied literally.
-const LELAND_UAT_BASELINE = [
-  { afdcId: 199999, correctedLat: 34.1954, correctedLng: -78.0231 }, // ChargePoint, Brunswick Forest
-  { afdcId: 199994, correctedLat: 34.2125, correctedLng: -78.011 }, // Blink Charging, Ocean Hwy E
-  { afdcId: 199993, correctedLat: 34.231, correctedLng: -77.989 }, // EnviroSpark Charging, Belville
-];
-
-export function seedLelandUatBaseline() {
-  ensureSpatialCorrectionsSchema();
-  for (const entry of LELAND_UAT_BASELINE) {
-    applyCorrection({ ...entry, source: 'UAT_MANUAL' });
-  }
-  return LELAND_UAT_BASELINE.length;
-}
+// UOW-21: the static UOW-18.2 Leland UAT baseline (hardcoded 'UAT_MANUAL'
+// coordinates for 199999/199994/199993) is retired. Those stations now get
+// their precision directly from afdcIngest.js's geocoding-cleanse pipeline
+// (afdc_stations.precision_score), the same uniform path every other station
+// in the fleet uses — seeding a static override here would just reintroduce
+// the special-casing this UOW removed, silently masking whatever the
+// geocoder resolves via this table's COALESCE join.
 
 // --- Single-station reconciliation (Nominatim, cache-first) --------------------
 
@@ -298,7 +281,6 @@ let reconcileTimer = null;
 /** Boot hook: arms the Leland-scoped background sweep on an unref'd interval. */
 export function startSpatialReconciliation() {
   ensureSpatialCorrectionsSchema();
-  seedLelandUatBaseline();
   if (reconcileTimer) return;
   reconcileTimer = setInterval(() => {
     runLelandReconciliationSweep().catch((err) =>
@@ -308,14 +290,12 @@ export function startSpatialReconciliation() {
   reconcileTimer.unref();
   console.log(
     `[boot] spatial MDM reconciliation armed: Leland 15mi pilot every ${RECONCILE_TICK_MS}ms | ` +
-    `source=overpass (${OVERPASS_URL}) | correction threshold=${RECONCILE_DELTA_THRESHOLD_M}m | ` +
-    `UAT baseline: ${LELAND_UAT_BASELINE.length} manually-surveyed sites seeded`
+    `source=overpass (${OVERPASS_URL}) | correction threshold=${RECONCILE_DELTA_THRESHOLD_M}m`
   );
 }
 
 // Standalone runner: `node src/services/spatialCorrections.js`
 if (import.meta.url === `file://${process.argv[1]}`) {
-  seedLelandUatBaseline();
   const result = await runLelandReconciliationSweep();
   console.log('Leland spatial MDM reconciliation sweep complete');
   console.log(`  ${JSON.stringify(result)}`);
