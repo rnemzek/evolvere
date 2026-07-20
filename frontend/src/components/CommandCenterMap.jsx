@@ -370,9 +370,12 @@ const stationStateLabel = (station) => {
 
 function clusterIcon(cluster) {
   const sagging = cluster.sagCount > 0
-  // UOW-21: clusters holding at least one geocoding-cleanse-verified station
-  // take the neon fuchsia treatment so high-precision coverage reads from
-  // any zoom (previously keyed off a five-station hardcoded dictionary).
+  // UOW-22.2 Task 22.2.1: dropped the has-ground-truth glow class. Real AFDC
+  // data means nearly every cluster now has a high-precision station, so the
+  // neon treatment had gone from a rare highlight to near-universal "pink
+  // bloom" across the whole viewport — a real mobile compositing cost for a
+  // signal that no longer distinguished anything. The count still surfaces
+  // as plain text below (free — no rendering cost).
   const highPrecision = cluster.highPrecisionCount > 0
   // Screen readers get the full telemetry sentence; the visual bubble shows
   // only the compact count. Enter/Space activate via Leaflet marker keyboard
@@ -390,20 +393,22 @@ function clusterIcon(cluster) {
     : `Cluster of ${cluster.count} national stations, all open — activate to zoom in`
   return L.divIcon({
     className: '',
-    html: `<div class="national-cluster${sagging ? ' sagging' : ''}${highPrecision ? ' has-ground-truth' : ''}" role="img" aria-label="${srLabel}">${formatCount(cluster.count)}</div>`,
+    html: `<div class="national-cluster${sagging ? ' sagging' : ''}" role="img" aria-label="${srLabel}">${formatCount(cluster.count)}</div>`,
     iconSize: [40, 40],
     iconAnchor: [20, 20],
   })
 }
 
-// UOW-21: neon fuchsia beacon for stations the geocoding-cleanse pipeline has
-// resolved to a verified rooftop coordinate — pulsing halo + rimmed core,
-// unmistakable against the dark tiles. Any station in the fleet can earn
-// this once geocoded; it's no longer reserved for a hardcoded id set.
-function highPrecisionIcon(station) {
+// UOW-22.2 Task 22.2.1: the neon halo/glow look is now reserved exclusively
+// for whichever single station is currently hovered (desktop) or tapped
+// (touch) — never rendered ambiently across the fleet. Because at most one
+// of these ever exists in the DOM at a time, its cost is O(1) regardless of
+// how many thousands of stations are on screen, unlike the old per-station
+// divIcon it replaces.
+function focusHaloIcon() {
   return L.divIcon({
     className: '',
-    html: `<div class="ground-truth-marker" role="img" aria-label="High-precision geocoded station: ${station.name}"><span class="halo"></span><span class="core"></span></div>`,
+    html: '<div class="station-focus-marker" aria-hidden="true"><span class="halo"></span><span class="core"></span></div>',
     iconSize: [44, 44],
     iconAnchor: [22, 22],
   })
@@ -418,6 +423,10 @@ function highPrecisionIcon(station) {
  */
 function NationalFleetLayer({ onViewportTotal }) {
   const [payload, setPayload] = useState(null)
+  // UOW-22.2 Task 22.2.1: tracks the single station currently hovered/tapped
+  // so the halo overlay below can render it — the only station that ever
+  // gets the glow treatment.
+  const [focusedStationId, setFocusedStationId] = useState(null)
   const seqRef = useRef(0)
 
   const refresh = useCallback(
@@ -478,59 +487,70 @@ function NationalFleetLayer({ onViewportTotal }) {
     ))
   }
 
-  // Pin palette: teal = open, amber = genuinely offline, planned sites render
-  // as neutral slate-blue blueprint outlines (dashed, low fill) so a future
-  // build-out never reads as an active system failure, and geocoding-cleanse
-  // verified stations render as neon fuchsia beacons (UOW-21).
-  return payload.stations.map((station) => station.isHighPrecision ? (
-    <Marker
-      key={station.stationId}
-      position={[station.latitude, station.longitude]}
-      icon={highPrecisionIcon(station)}
-      keyboard={true}
-      alt={`High-precision geocoded station: ${station.name}`}
-      eventHandlers={tapOpenTooltip}
-    >
-      <Tooltip direction="top" offset={[0, -14]} opacity={1} className="charger-tooltip">
-        <div className="space-y-1">
-          <p className="text-sm font-semibold text-zinc-100">{station.name}</p>
-          <p className="text-[10px] font-bold uppercase tracking-widest text-fuchsia-300">
-            ◆ Rooftop-Interpolated
-          </p>
-          <p className="font-mono text-xs text-zinc-300">
-            {station.stationId} · {station.state ?? '—'} ·{' '}
-            {station.latitude.toFixed(4)}, {station.longitude.toFixed(4)}
-          </p>
-        </div>
-      </Tooltip>
-    </Marker>
-  ) : (
-    <CircleMarker
-      key={station.stationId}
-      center={[station.latitude, station.longitude]}
-      radius={5}
-      renderer={touchPinRenderer}
-      eventHandlers={tapOpenTooltip}
-      bubblingMouseEvents={false}
-      pathOptions={{
-        color: station.isPlanned ? '#94a3b8' : station.activeGridSag ? '#f59e0b' : '#2dd4bf',
-        weight: 1.5,
-        dashArray: station.isPlanned ? '2 3' : null,
-        fillColor: station.isPlanned ? '#94a3b8' : station.activeGridSag ? '#f59e0b' : '#2dd4bf',
-        fillOpacity: station.isPlanned ? 0.2 : 0.5,
-      }}
-    >
-      <Tooltip direction="top" opacity={1} className="charger-tooltip">
-        <div className="space-y-1">
-          <p className="text-sm font-semibold text-slate-100">{station.name}</p>
-          <p className="font-mono text-xs text-zinc-300">
-            {station.stationId} · {station.state ?? '—'}
-            {stationStateLabel(station)}
-          </p>
-        </div>
-      </Tooltip>
-    </CircleMarker>
-  ))
+  // UOW-22.2 Task 22.2.1: every station now renders as the same lightweight
+  // CircleMarker — Task 9.2's shared touchPinRenderer rasterizes all of them
+  // into a single canvas element, so this scales to the full 500-pin cap
+  // with no added DOM nodes and no CSS animation running per-marker. Pin
+  // palette: teal = open, amber = genuinely offline, planned sites render as
+  // neutral slate-blue blueprint outlines (dashed, low fill) so a future
+  // build-out never reads as an active system failure. High-precision status
+  // is now tooltip-only info (no ambient visual weight); the neon halo is
+  // reserved for whichever station is focused, rendered once below.
+  const focusedStation = focusedStationId
+    ? payload.stations.find((s) => s.stationId === focusedStationId)
+    : null
+
+  return [
+    ...payload.stations.map((station) => (
+      <CircleMarker
+        key={station.stationId}
+        center={[station.latitude, station.longitude]}
+        radius={5}
+        renderer={touchPinRenderer}
+        eventHandlers={{
+          click: (e) => {
+            e.target.openTooltip()
+            setFocusedStationId(station.stationId)
+          },
+          mouseover: () => setFocusedStationId(station.stationId),
+          mouseout: () =>
+            setFocusedStationId((current) => (current === station.stationId ? null : current)),
+        }}
+        bubblingMouseEvents={false}
+        pathOptions={{
+          color: station.isPlanned ? '#94a3b8' : station.activeGridSag ? '#f59e0b' : '#2dd4bf',
+          weight: 1.5,
+          dashArray: station.isPlanned ? '2 3' : null,
+          fillColor: station.isPlanned ? '#94a3b8' : station.activeGridSag ? '#f59e0b' : '#2dd4bf',
+          fillOpacity: station.isPlanned ? 0.2 : 0.5,
+        }}
+      >
+        <Tooltip direction="top" opacity={1} className="charger-tooltip">
+          <div className="space-y-1">
+            <p className="text-sm font-semibold text-slate-100">{station.name}</p>
+            {station.isHighPrecision && (
+              <p className="text-[10px] font-bold uppercase tracking-widest text-fuchsia-300">
+                ◆ High-Precision Geocoded
+              </p>
+            )}
+            <p className="font-mono text-xs text-zinc-300">
+              {station.stationId} · {station.state ?? '—'}
+              {stationStateLabel(station)}
+            </p>
+          </div>
+        </Tooltip>
+      </CircleMarker>
+    )),
+    focusedStation ? (
+      <Marker
+        key={`focus-${focusedStation.stationId}`}
+        position={[focusedStation.latitude, focusedStation.longitude]}
+        icon={focusHaloIcon()}
+        interactive={false}
+        keyboard={false}
+      />
+    ) : null,
+  ]
 }
 
 /**

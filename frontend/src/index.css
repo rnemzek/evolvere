@@ -79,7 +79,6 @@ body {
    thumb-press fires Leaflet's pointer-event click instantly; pointer-events
    is pinned explicitly so no ancestor stacking rule can swallow the tap. */
 .charger-marker,
-.ground-truth-marker,
 .national-cluster {
   touch-action: manipulation;
   pointer-events: auto;
@@ -175,27 +174,24 @@ body {
   box-shadow: 0 0 10px 2px rgba(245, 158, 11, 0.35);
 }
 
-/* UOW-15 Task 15.5: clusters holding a ground-truth validation anchor glow
-   neon fuchsia so the Leland anchors stay locatable from any pan-out level. */
-.national-cluster.has-ground-truth {
-  border-color: rgba(232, 121, 249, 0.95);
-  box-shadow:
-    0 0 12px 3px rgba(232, 121, 249, 0.55),
-    0 0 26px 6px rgba(232, 121, 249, 0.25);
-}
-
-/* Ground-truth validation pin: vivid neon fuchsia beacon with a pulsing halo
-   — unmistakable against the dark tiles and the teal/amber fleet palette. */
-.ground-truth-marker {
+/* UOW-22.2 Task 22.2.1: the neon fuchsia glow — previously applied to every
+   high-precision cluster/station ambiently (UOW-15/21) — is now reserved for
+   a single focused (hovered/tapped) station at a time (.station-focus-marker
+   below), rendered by NationalFleetLayer as one optional overlay Marker.
+   Applying this treatment fleet-wide was cheap when only a handful of
+   hardcoded stations qualified; once real AFDC data made nearly every
+   station "high-precision," it became thousands of animated, heavily-blurred
+   DOM markers at once — a direct cause of mobile Chrome OOM crashes. */
+.station-focus-marker {
   position: relative;
   width: 44px;
   height: 44px;
   display: grid;
   place-items: center;
-  cursor: pointer;
+  pointer-events: none; /* decorative overlay only — the underlying CircleMarker stays interactive */
 }
 
-.ground-truth-marker .core {
+.station-focus-marker .core {
   width: 16px;
   height: 16px;
   border-radius: 9999px;
@@ -207,7 +203,7 @@ body {
     0 0 26px 8px rgba(232, 121, 249, 0.45);
 }
 
-.ground-truth-marker .halo {
+.station-focus-marker .halo {
   position: absolute;
   inset: 0;
   margin: auto;
@@ -348,7 +344,7 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .charger-marker .dot,
   .charger-marker .ring,
-  .ground-truth-marker .halo,
+  .station-focus-marker .halo,
   .grid-zone-outage,
   .alert-desk-row-enter,
   .alert-desk-row-resolving {

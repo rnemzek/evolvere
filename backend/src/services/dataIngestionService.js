@@ -284,8 +284,12 @@ export async function ingestNationalChargers(target = NATIONAL_TARGET) {
 
 // --- Spatial boundary filtering & clustering (Task 9.2) ------------------------
 
-export const CLUSTER_ZOOM_THRESHOLD = 10; // below this, pins bucket into clusters
-export const STATION_MODE_CAP = 1500; // per-response pin ceiling at street zooms
+// UOW-22.2 Task 22.2.2: mobile Chrome was OOM-crashing under thousands of
+// individually-rendered station pins. Clustering now holds through zoom 13
+// (individual pins only from 14+), and the street-zoom pin ceiling drops from
+// 1,500 to 500 — both the DOM/canvas marker count and the SQL LIMIT below.
+export const CLUSTER_ZOOM_THRESHOLD = 14; // below this, pins bucket into clusters
+export const STATION_MODE_CAP = 500; // per-response pin ceiling at street zooms
 const CELLS_PER_TILE_AXIS = 4;
 
 /**
