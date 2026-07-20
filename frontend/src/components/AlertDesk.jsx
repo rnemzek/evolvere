@@ -221,7 +221,7 @@ function AlertDesk() {
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Search station / network…"
-            className="w-full min-h-9 rounded-lg border border-slate-700 bg-slate-950/60 px-3 text-sm text-slate-200 placeholder:text-slate-600 focus-visible:outline-2 focus-visible:outline-cyan-400"
+            className="w-full min-h-9 rounded-lg border border-slate-700 bg-slate-950/60 px-3 text-base text-slate-200 placeholder:text-slate-600 focus-visible:outline-2 focus-visible:outline-cyan-400"
           />
         </label>
         {filterActive && phase === 'ready' && (

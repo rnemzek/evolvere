@@ -89,7 +89,7 @@ function SubscribeForm() {
             value={phoneNumber}
             onChange={(e) => setPhoneNumber(e.target.value)}
             placeholder="+1 555 010 0199"
-            className="min-h-11 flex-1 min-w-0 rounded-lg border border-slate-700 bg-slate-800/70 px-3 text-sm placeholder:text-slate-600 focus:outline-none focus:border-cyan-600"
+            className="min-h-11 flex-1 min-w-0 rounded-lg border border-slate-700 bg-slate-800/70 px-3 text-base placeholder:text-slate-600 focus:outline-none focus:border-cyan-600"
           />
           <button
             type="submit"

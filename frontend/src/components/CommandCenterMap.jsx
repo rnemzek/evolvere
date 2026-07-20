@@ -593,7 +593,7 @@ function MapNavigator({ map }) {
           onChange={(e) => setQuery(e.target.value)}
           placeholder="City, state, or ZIP…"
           aria-label="Go to city, state, or ZIP code"
-          className="min-w-0 flex-1 min-h-11 rounded-lg border border-slate-700 bg-slate-950/80 px-2.5 text-sm text-slate-100 placeholder:text-slate-500 focus:border-cyan-600 focus:outline-none"
+          className="min-w-0 flex-1 min-h-11 rounded-lg border border-slate-700 bg-slate-950/80 px-2.5 text-base text-slate-100 placeholder:text-slate-500 focus:border-cyan-600 focus:outline-none"
         />
         <button
           type="submit"
