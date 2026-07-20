@@ -231,21 +231,36 @@ function AlertDesk({ selectedAlertId, onSelectAlert }) {
         )}
       </form>
 
-      {/* Task 19.3.1: a single element combining pan-x + pan-y (touch-auto or
-          hand-composed touch-pan-x/touch-pan-y) is exactly where iOS WebKit
-          has a known history of dropping one axis under real-device gesture
-          recognition — splitting into two nested, axis-locked scroll regions
-          sidesteps that class of bug entirely: WebKit only ever has to
-          resolve ONE axis per element. overscroll-contain on both stops
-          scroll chaining from either axis bleeding into the page shell once
-          a region hits its edge. scrollbar-gutter stays on the outer
-          (vertical) wrapper, matching where the visible scrollbar rail is.
-          flex-1 min-h-0 (kept alongside the PO's literal class list): without
-          it this wrapper reverts to content-height, and a short incident
-          list would leave a blank gap above the footer inside the fixed
-          h-96 shell — breaking the desk's documented CLS-isolation contract. */}
-      <div className="flex-1 min-h-0 w-full max-h-[300px] overflow-y-auto overscroll-contain touch-pan-y [-webkit-overflow-scrolling:touch] [scrollbar-gutter:stable]">
-        <div className="w-full min-w-full overflow-x-auto overscroll-contain touch-pan-x">
+      {/* Task 19.4.1: flex-1/min-h-0 fully removed per this UOW's explicit
+          "Flex Unbind" directive — a hard pixel height replaces the flex-
+          computed one so this wrapper's clientHeight is a fixed, known
+          quantity independent of the desk's h-96 shell math. Trade-off this
+          time deliberately accepted rather than overridden (unlike 19.3): a
+          short incident list now leaves visible space above the footer
+          instead of the wrapper stretching to fill it — the desk's h-96
+          section is still fixed, so no layout-shift/CLS risk, just a look
+          change on sparse ledgers. Inline styles (not Tailwind classes) per
+          the PO's literal spec — WebkitOverflowScrolling has no Tailwind
+          utility equivalent anyway. */}
+      <div
+        style={{
+          height: '240px',
+          overflowY: 'auto',
+          WebkitOverflowScrolling: 'touch',
+          overscrollBehavior: 'contain',
+          touchAction: 'pan-y',
+        }}
+        className="w-full"
+      >
+        <div
+          style={{
+            overflowX: 'auto',
+            WebkitOverflowScrolling: 'touch',
+            overscrollBehavior: 'contain',
+            touchAction: 'pan-x',
+          }}
+          className="w-full"
+        >
         {phase === 'loading' ? (
           <LoadingSkeleton />
         ) : phase === 'error' ? (

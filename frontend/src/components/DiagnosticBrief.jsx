@@ -33,12 +33,19 @@ function DiagnosticBrief({ alert, ledgerAlert, briefs = [] }) {
         </h2>
       </header>
 
-      {/* Task 19.3.2: touch-pan-y (single axis, this panel only ever scrolls
-          vertically) + overscroll-contain stops the swipe from chaining into
-          the fixed-shell page once the text hits its top/bottom edge —
-          same WebKit-safe axis-locked approach as the Alert Desk split in
-          19.3.1, just single-axis here since there's no horizontal content. */}
-      <div className="p-4 w-full max-h-[250px] overflow-y-auto overscroll-contain touch-pan-y [-webkit-overflow-scrolling:touch]">
+      {/* Task 19.4.2: hard 200px height replaces the flex/max-h-derived one —
+          same "unbind flex, guarantee a known clientHeight" rationale as the
+          Alert Desk (19.4.1). Inline styles per the PO's literal spec. */}
+      <div
+        style={{
+          height: '200px',
+          overflowY: 'auto',
+          WebkitOverflowScrolling: 'touch',
+          overscrollBehavior: 'contain',
+          touchAction: 'pan-y',
+        }}
+        className="w-full p-4"
+      >
         {ledgerAlert ? (
           <>
             <p className="text-xs font-mono text-slate-400 mb-3 flex items-center gap-2 flex-wrap">
