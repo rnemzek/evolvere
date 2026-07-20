@@ -4,6 +4,7 @@ import { boundsQueryParts } from './afdcSchema.js';
 // Benign ESM cycle (afdcIngest imports CORRIDORS from here): both bindings
 // are dereferenced only at call time, never during module evaluation.
 import { GROUND_TRUTH_IDS } from './afdcIngest.js';
+import { ensureSpatialCorrectionsSchema } from './spatialCorrections.js';
 
 // National ingestion pipe (UOW-09 Task 9.1): pages and caches up to
 // NATIONAL_TARGET real US public charger positions along the key shipping
@@ -310,10 +311,18 @@ const CELLS_PER_TILE_AXIS = 4;
  * genuinely unavailable stations only (status_code 'T' or unknown non-open).
  * Planned build-outs ('P') ride separately as `isPlanned`/`plannedCount` so
  * the UI can render neutral blueprint indicators instead of faults.
+ *
+ * UOW-17 Task 17.2: every coordinate read below LEFT JOINs
+ * station_spatial_corrections and wraps latitude/longitude in
+ * COALESCE(corrected, original) — a manual or geocoder-reconciled override
+ * wins with zero extra round-trip, so precision fixes land on the live map
+ * the instant they're written, not on the next AFDC bulk re-ingest.
  */
 export function getSpatialClusters({ minLat, maxLat, minLng, maxLng, zoom }) {
+  ensureSpatialCorrectionsSchema();
   const database = getDb();
   const { join, where, params } = boundsQueryParts({ minLat, maxLat, minLng, maxLng });
+  const CORRECTIONS_JOIN = 'LEFT JOIN station_spatial_corrections c ON c.afdc_id = s.afdc_id';
   // UOW-14 Task 14.1: AFDC 'P' (planned build-out) is a blueprint, not a
   // fault — only genuinely unavailable stations (T, or unknown non-open
   // codes) feed attention counters. Planned sites travel as their own count.
@@ -333,9 +342,10 @@ export function getSpatialClusters({ minLat, maxLat, minLng, maxLng, zoom }) {
     const centerLng = (minLng + maxLng) / 2;
     const rows = database
       .prepare(`SELECT s.afdc_id, s.station_name, s.state, s.ev_network, s.status_code,
-                       s.latitude, s.longitude
-                FROM afdc_stations s ${join} WHERE ${where}
-                ORDER BY (s.latitude - ?) * (s.latitude - ?) + (s.longitude - ?) * (s.longitude - ?)
+                       COALESCE(c.corrected_lat, s.latitude) AS latitude,
+                       COALESCE(c.corrected_lng, s.longitude) AS longitude
+                FROM afdc_stations s ${join} ${CORRECTIONS_JOIN} WHERE ${where}
+                ORDER BY (latitude - ?) * (latitude - ?) + (longitude - ?) * (longitude - ?)
                 LIMIT ${STATION_MODE_CAP}`)
       .all(...params, centerLat, centerLat, centerLng, centerLng);
     return {
@@ -366,16 +376,18 @@ export function getSpatialClusters({ minLat, maxLat, minLng, maxLng, zoom }) {
   // keeps the aggregate one pass; clusters holding a ground-truth anchor get
   // a neon treatment so the anchors stay locatable even when panned out.
   const GROUND_TRUTH = `CASE WHEN s.afdc_id IN (${[...GROUND_TRUTH_IDS].join(',')}) THEN 1 ELSE 0 END`;
+  const CORRECTED_LAT = 'COALESCE(c.corrected_lat, s.latitude)';
+  const CORRECTED_LNG = 'COALESCE(c.corrected_lng, s.longitude)';
   const rows = database
-    .prepare(`SELECT CAST((s.latitude + 90.0) / ? AS INTEGER) AS ci,
-                     CAST((s.longitude + 180.0) / ? AS INTEGER) AS cj,
+    .prepare(`SELECT CAST((${CORRECTED_LAT} + 90.0) / ? AS INTEGER) AS ci,
+                     CAST((${CORRECTED_LNG} + 180.0) / ? AS INTEGER) AS cj,
                      COUNT(*) AS n,
-                     AVG(s.latitude) AS lat,
-                     AVG(s.longitude) AS lng,
+                     AVG(${CORRECTED_LAT}) AS lat,
+                     AVG(${CORRECTED_LNG}) AS lng,
                      SUM(${ATTENTION}) AS attention,
                      SUM(${PLANNED}) AS planned,
                      SUM(${GROUND_TRUTH}) AS groundTruth
-              FROM afdc_stations s ${join} WHERE ${where}
+              FROM afdc_stations s ${join} ${CORRECTIONS_JOIN} WHERE ${where}
               GROUP BY ci, cj`)
     .all(cellDeg, cellDeg, ...params);
 

@@ -2,6 +2,24 @@ import { getDb } from './chargerDirectory.js';
 import { getGridNode, getIspCarrier, haversineKm } from './infrastructureTopology.js';
 import { resolveFleetTopology, listEvents } from './environmentalSimulator.js';
 import { correlateStation, correlationSummary, COHESION_THRESHOLD } from './spatialCorrelator.js';
+import { raiseTask, closeTask } from './workQueueService.js';
+
+// UOW-17 Task 17.3: this is "the RCA correlator" the Work Queue dispatch
+// engine hooks into — causeClass here already IS the root-cause verdict
+// (LOCAL_HARDWARE vs. EXTERNAL_GRID_FAILURE vs. EXTERNAL_NETWORK_DROP vs.
+// ENVIRONMENTAL_WEATHER), so raiseTask/closeTask ride the same call sites
+// that write brief/incident-log rows rather than re-deriving the verdict.
+
+// Mirrors the frontend's FAULT_CATEGORIES severity ladder (alertEngine.js) so
+// a dispatched task's priority badge agrees with what the operator already
+// sees on the fault itself.
+const CODE_SEVERITY = {
+  GroundFailure: 'CRITICAL',
+  Power_Loss: 'CRITICAL',
+  Comms_Loss: 'WARNING',
+  Weather_Impact: 'WARNING',
+};
+const faultSeverity = (code) => CODE_SEVERITY[code] ?? 'WARNING';
 
 // AI Diagnostic Brief triage (UOW-06 Task 6.5). When a connector faults, the
 // interceptor looks up the station's topology bindings, cross-references active
@@ -308,6 +326,16 @@ function upsertBrief({ station, connectorId, code, snapshot = null, countOccurre
     }
   }
 
+  // UOW-17 Task 17.3: dispatch decision rides the same RCA verdict the brief
+  // was just synthesized from — isolated hardware faults raise a TRUCK_ROLL,
+  // confirmed external outages raise a ticket instead.
+  raiseTask({
+    incidentId: key,
+    stationId: station.chargerId,
+    causeClass: synthesis.causeClass,
+    severity: faultSeverity(code),
+  });
+
   database
     .prepare(`
       INSERT INTO alert_briefs
@@ -384,6 +412,7 @@ function deleteBrief(chargerId, connectorId) {
       'UPDATE alert_incident_log SET resolved_at = ? WHERE charger_id = ? AND connector_id = ? AND resolved_at IS NULL'
     )
     .run(new Date().toISOString(), chargerId, Number(connectorId));
+  closeTask(key);
   briefCache.delete(key);
   return cleared ? { action: 'ALERT_CLEARED', alert: cleared } : null;
 }
@@ -415,6 +444,12 @@ function sweepSpatialUpgrades(snapshot) {
       station,
       connectorId: brief.connectorId,
       correlation,
+    });
+    raiseTask({
+      incidentId: key,
+      stationId: brief.chargerId,
+      causeClass: synthesis.causeClass,
+      severity: faultSeverity(brief.code),
     });
     const now = new Date().toISOString();
     const context = { ...brief.context, correlation: correlationSummary(correlation) };

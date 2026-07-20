@@ -2,7 +2,7 @@ const REVENUE_AT_RISK_PER_PORT_HOUR = 22.5 // $0.45/kWh × 50 kW commercial fast
 
 function StatTile({ label, value, unit, tone = 'text-cyan-400', caption }) {
   return (
-    <div className="rounded-xl border border-slate-800 bg-slate-900/70 backdrop-blur p-4">
+    <div className="min-w-0 rounded-xl border border-slate-800 bg-slate-900/70 backdrop-blur p-4">
       <p className="text-xs uppercase tracking-widest text-slate-400">{label}</p>
       <p className={`mt-1 text-3xl font-bold tabular-nums ${tone}`}>
         {value}
@@ -26,7 +26,7 @@ function KPIStats({ stations, transactions }) {
   return (
     <section
       aria-label="Fleet KPIs"
-      className="grid grid-cols-2 lg:grid-cols-4 gap-3"
+      className="grid grid-cols-2 lg:grid-cols-4 gap-3 max-w-full overflow-x-hidden"
     >
       <StatTile
         label="Fleet Uptime"

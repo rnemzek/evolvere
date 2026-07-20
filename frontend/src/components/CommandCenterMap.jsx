@@ -554,6 +554,11 @@ function MapNavigator({ map }) {
 
   const goToLocation = async (event) => {
     event.preventDefault()
+    // UOW-17 Task 17.1: blur the search input immediately on submit — mobile
+    // Safari/Chrome keep the virtual keyboard's viewport offset applied until
+    // the focused element loses focus, so without this the map (and the
+    // fixed-inset shell around it) stays shifted upward after the flyTo.
+    document.activeElement?.blur?.()
     const q = query.trim()
     if (!q || !map || busy) return
     setBusy(true)

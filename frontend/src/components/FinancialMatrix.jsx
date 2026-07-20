@@ -28,7 +28,7 @@ function FinancialMatrix() {
   }, [])
 
   return (
-    <section aria-label="Earning versus Burning financial matrix" className="space-y-3">
+    <section aria-label="Earning versus Burning financial matrix" className="max-w-full overflow-x-hidden space-y-3">
       <div className="flex flex-wrap items-end justify-between gap-2">
         <div>
           <h2 className="text-xs font-bold uppercase tracking-widest text-slate-300">

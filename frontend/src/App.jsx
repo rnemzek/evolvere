@@ -4,6 +4,7 @@ import KPIStats from './components/KPIStats.jsx'
 import ROIPanel from './components/ROIPanel.jsx'
 import AlertTable from './components/AlertTable.jsx'
 import AlertDesk from './components/AlertDesk.jsx'
+import DispatchBoard from './components/DispatchBoard.jsx'
 import DiagnosticBrief from './components/DiagnosticBrief.jsx'
 import ControlPanel from './components/ControlPanel.jsx'
 import { fetchSessionHistory, fetchAlertBriefs, fetchRegistryProfile } from './services/fleetApi.js'
@@ -135,12 +136,12 @@ function App() {
     // Financials mains, the map tray) or for Leaflet's pointer-event pipeline,
     // so a thumb-drag pans exactly one thing: the map canvas.
     <div className="fixed inset-0 overflow-hidden overscroll-none touch-none bg-slate-950 text-slate-100 flex flex-col">
-      <header className="z-[1000] w-full left-0 right-0 box-border shrink-0 flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-slate-800 bg-slate-900/85 backdrop-blur">
-        <div>
-          <h1 className="text-sm font-bold tracking-widest text-cyan-400">
+      <header className="z-[1000] w-full max-w-full left-0 right-0 box-border shrink-0 overflow-x-hidden flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-slate-800 bg-slate-900/85 backdrop-blur">
+        <div className="min-w-0">
+          <h1 className="text-sm font-bold tracking-widest text-cyan-400 truncate">
             Nemzilla evolvère GRID
           </h1>
-          <p className="text-xs text-slate-400">
+          <p className="text-xs text-slate-400 truncate">
             {registryProfile
               ? `${registryProfile.stations.toLocaleString()} stations · ${registryProfile.coverage} · ${registryProfile.states} states · live`
               : `${stations.length} fleet chargers · live`}
@@ -187,7 +188,7 @@ function App() {
           <StationDrawer station={selectedStation} onClose={() => setSelectedStationId(null)} />
         </main>
       ) : view === 'Financials' ? (
-        <main className="flex-1 overflow-y-auto overscroll-contain p-4">
+        <main className="flex-1 max-w-full overflow-y-auto overflow-x-hidden overscroll-contain p-4">
           <ChunkErrorBoundary label="Financial matrix">
             <Suspense fallback={<LedgerLoadingFallback />}>
               <FinancialMatrix />
@@ -195,10 +196,11 @@ function App() {
           </ChunkErrorBoundary>
         </main>
       ) : (
-        <main className="flex-1 overflow-y-auto overscroll-contain p-4 space-y-4">
+        <main className="flex-1 max-w-full overflow-y-auto overflow-x-hidden overscroll-contain p-4 space-y-4">
           <KPIStats stations={stations} transactions={transactions} />
           <ROIPanel stations={stations} />
           <AlertDesk />
+          <DispatchBoard />
           <div className="grid gap-4 lg:grid-cols-3">
             <div className="lg:col-span-2">
               <AlertTable

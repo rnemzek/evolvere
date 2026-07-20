@@ -32,6 +32,14 @@ import { ensureAfdcSchema } from './services/afdcSchema.js';
 import { initAfdcIngestion, getRegistryProfile, locateRegistry } from './services/afdcIngest.js';
 import { ensureAlertSchema, onIncidentEvent, raiseAlert, clearAlerts, listOpenLedger } from './services/alertManager.js';
 import { initGridOutages, listGridOutages, syncGridOutages } from './services/gridOutageService.js';
+import { ensureWorkQueueSchema, listTasks, getQueueSummary, markDispatched } from './services/workQueueService.js';
+import {
+  ensureSpatialCorrectionsSchema,
+  listCorrections,
+  applyCorrection,
+  runReconciliationBatch,
+  startSpatialReconciliation,
+} from './services/spatialCorrections.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -400,6 +408,78 @@ app.post('/api/v1/grid/outages/sync', async (_req, res) => {
   }
 });
 
+// UOW-17 Task 17.2: Geospatial MDM — manual + background-geocoder coordinate
+// overrides that ride a COALESCE join into the spatial-cluster engine
+// (dataIngestionService.js) with zero extra round-trip on the map's hot path.
+app.get('/api/v1/registry/spatial-corrections', (_req, res) => {
+  try {
+    res.json({ corrections: listCorrections() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/v1/registry/spatial-corrections', (req, res) => {
+  const { afdcId, correctedLat, correctedLng } = req.body ?? {};
+  try {
+    res.json(
+      applyCorrection({
+        afdcId: Number(afdcId),
+        correctedLat: Number(correctedLat),
+        correctedLng: Number(correctedLng),
+        source: 'manual',
+      })
+    );
+  } catch (err) {
+    res.status(err instanceof TypeError ? 400 : 500).json({ error: err.message });
+  }
+});
+
+// Manual trigger for the background Nominatim/Pelias reconciliation sweep,
+// outside its normal cadence (operator "reconcile now").
+app.post('/api/v1/registry/spatial-corrections/reconcile', async (_req, res) => {
+  try {
+    res.json(await runReconciliationBatch());
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+// UOW-17 Task 17.3: RCA Operational Work Queue — the NOC Dispatch Board's read
+// + action surface. Tasks are raised by the triage RCA correlator (TRUCK_ROLL
+// for isolated hardware faults, UTILITY_TICKET/ISP_TICKET for confirmed
+// regional outages) and closed automatically once the underlying alert clears.
+app.get('/api/v1/work-queue/tasks', (req, res) => {
+  const status = req.query.status ? String(req.query.status).toUpperCase() : null;
+  try {
+    res.json({ tasks: listTasks({ status }) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/v1/work-queue/summary', (_req, res) => {
+  try {
+    res.json(getQueueSummary());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/v1/work-queue/tasks/:id/dispatch', (req, res) => {
+  const taskId = Number(req.params.id);
+  if (!Number.isInteger(taskId)) return res.status(400).json({ error: 'task id must be an integer' });
+  try {
+    const task = markDispatched(taskId);
+    if (!task) {
+      return res.status(409).json({ error: `Task ${taskId} is not OPEN (already dispatched/closed, or unknown)` });
+    }
+    res.json(task);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // National viewport stream (UOW-09 Task 9.2): bounding-box filter + server-side
 // grid-bucket clustering below zoom 10 so Leaflet holds its 60 FPS budget.
 app.get('/api/v1/fleet/spatial-cluster', (req, res) => {
@@ -515,6 +595,8 @@ await initFleetState();
 await loadSubscribers();
 await initDirectory();
 await initSimulator();
+ensureWorkQueueSchema();
+console.log('[boot] work queue schema ready | RCA dispatch board: TRUCK_ROLL / UTILITY_TICKET / ISP_TICKET');
 initTriage(await getFleetStatus());
 const afdcSchema = ensureAfdcSchema();
 console.log(
@@ -524,6 +606,8 @@ const afdcBoot = await initAfdcIngestion();
 console.log(
   `[boot] AFDC registry: ${afdcBoot.stations ?? afdcBoot.ingested} stations | source: ${afdcBoot.source} | verified: ${afdcBoot.verified}`
 );
+ensureSpatialCorrectionsSchema();
+startSpatialReconciliation();
 ensureAlertSchema();
 console.log('[boot] alert ledger schema ready | unified incident store: alerts + idx_alerts_station_status');
 // Task 12.2 SSE bridge: every post-commit ledger event (opened / consolidated /

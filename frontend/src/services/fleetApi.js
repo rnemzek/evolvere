@@ -106,6 +106,21 @@ export function fetchGridOutages() {
   return getJson('/api/v1/grid/outages');
 }
 
+// UOW-17 Task 17.4: NOC Dispatch Board reads/actions over the RCA work queue
+// (TRUCK_ROLL vs. UTILITY_TICKET vs. ISP_TICKET tasks).
+export function fetchWorkQueueTasks(status) {
+  const q = status ? `?status=${encodeURIComponent(status)}` : '';
+  return getJson(`/api/v1/work-queue/tasks${q}`);
+}
+
+export function fetchWorkQueueSummary() {
+  return getJson('/api/v1/work-queue/summary');
+}
+
+export function postDispatchTask(taskId) {
+  return postJson(`/api/v1/work-queue/tasks/${encodeURIComponent(taskId)}/dispatch`, {});
+}
+
 export function subscribeToAlerts(phoneNumber) {
   return postJson('/api/v1/fleet/subscribe', { phoneNumber });
 }
