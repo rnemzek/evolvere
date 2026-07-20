@@ -33,19 +33,12 @@ function DiagnosticBrief({ alert, ledgerAlert, briefs = [] }) {
         </h2>
       </header>
 
-      {/* Task 19.4.2: hard 200px height replaces the flex/max-h-derived one —
-          same "unbind flex, guarantee a known clientHeight" rationale as the
-          Alert Desk (19.4.1). Inline styles per the PO's literal spec. */}
-      <div
-        style={{
-          height: '200px',
-          overflowY: 'auto',
-          WebkitOverflowScrolling: 'touch',
-          overscrollBehavior: 'contain',
-          touchAction: 'pan-y',
-        }}
-        className="w-full p-4"
-      >
+      {/* Task 19.5.2: reverted to plain Tailwind — the root-level fix
+          (index.css, Task 19.5.1) is what actually governs touch-scroll
+          routing now, so this panel just needs a bounded vertical-scroll
+          region, not its own inline touch-action/WebkitOverflowScrolling
+          machinery. */}
+      <div className="p-4 max-h-[250px] overflow-y-auto">
         {ledgerAlert ? (
           <>
             <p className="text-xs font-mono text-slate-400 mb-3 flex items-center gap-2 flex-wrap">

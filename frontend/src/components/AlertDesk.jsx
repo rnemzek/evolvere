@@ -231,36 +231,26 @@ function AlertDesk({ selectedAlertId, onSelectAlert }) {
         )}
       </form>
 
-      {/* Task 19.4.1: flex-1/min-h-0 fully removed per this UOW's explicit
-          "Flex Unbind" directive — a hard pixel height replaces the flex-
-          computed one so this wrapper's clientHeight is a fixed, known
-          quantity independent of the desk's h-96 shell math. Trade-off this
-          time deliberately accepted rather than overridden (unlike 19.3): a
-          short incident list now leaves visible space above the footer
-          instead of the wrapper stretching to fill it — the desk's h-96
-          section is still fixed, so no layout-shift/CLS risk, just a look
-          change on sparse ledgers. Inline styles (not Tailwind classes) per
-          the PO's literal spec — WebkitOverflowScrolling has no Tailwind
-          utility equivalent anyway. */}
-      <div
-        style={{
-          height: '240px',
-          overflowY: 'auto',
-          WebkitOverflowScrolling: 'touch',
-          overscrollBehavior: 'contain',
-          touchAction: 'pan-y',
-        }}
-        className="w-full"
-      >
-        <div
-          style={{
-            overflowX: 'auto',
-            WebkitOverflowScrolling: 'touch',
-            overscrollBehavior: 'contain',
-            touchAction: 'pan-x',
-          }}
-          className="w-full"
-        >
+      {/* Task 19.5.2: the root-level fix (index.css, Task 19.5.1) is now
+          where touch-scroll routing actually lives — html/body keep the hard
+          document-scroll lock, #root carries its own overflow-y:auto, and
+          touch-action:pan-y is centralized at the shell level. That makes
+          the component-level machinery from 19.3 (axis-split nested
+          wrappers) and 19.4 (inline hard-pixel-height styles) unnecessary
+          complexity for what plain Tailwind utilities already express.
+          flex-1 min-h-0 kept (not in the PO's literal class list) for the
+          same reason as 19.3: without it a short incident list leaves a
+          blank gap above the footer inside the fixed h-96 shell. Horizontal
+          scroll on the wide ledger table is intentionally NOT carried
+          through this pass — 19.5.1 states horizontal scroll should remain
+          blocked at the shell level; the table's own min-w-[720px] (added in
+          19.1.1 to make the now-abandoned horizontal scroll meaningful) is
+          dropped here too, so the 6 columns squeeze to fit the viewport
+          instead of a fixed-width table getting clipped with no way to pan
+          to the rest. Narrow phones will read tighter columns rather than
+          losing content outright — a real trade-off, flagged in the doc
+          update, not silently dropped. */}
+      <div className="flex-1 min-h-0 w-full max-h-[300px] overflow-y-auto [scrollbar-gutter:stable]">
         {phase === 'loading' ? (
           <LoadingSkeleton />
         ) : phase === 'error' ? (
@@ -270,7 +260,7 @@ function AlertDesk({ selectedAlertId, onSelectAlert }) {
         ) : filteredAlerts.length === 0 ? (
           <DeskNotice>No incidents match the active filters.</DeskNotice>
         ) : (
-          <table className="w-full min-w-[720px] border-collapse text-left text-sm">
+          <table className="w-full border-collapse text-left text-sm">
             <caption className="sr-only">
               Active incident desk: showing {filteredAlerts.length} of {alerts.length} incidents
               under the current severity and search filters, sorted by severity, critical first,
@@ -354,7 +344,6 @@ function AlertDesk({ selectedAlertId, onSelectAlert }) {
             </tbody>
           </table>
         )}
-        </div>
       </div>
 
       <footer className="shrink-0 flex items-center justify-between gap-3 px-4 py-2 border-t border-slate-800 text-xs text-slate-400 tabular-nums">

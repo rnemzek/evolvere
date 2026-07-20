@@ -1,17 +1,23 @@
 @import "tailwindcss";
 
-/* UOW-16 Task 16.2 / UOW-18 Task 18.1: viewport ghost-scroll hardening. The
-   app shell is itself position:fixed inset-0, so nothing in the document
-   flow should ever scroll — but a fixed-positioned descendant does not stop
-   its OWN ancestors (html/body) from being scrollable, and Leaflet's flyTo/
-   flyToBounds pans apply CSS transforms to internal map panes that could, on
-   some mobile browsers, nudge window.scrollX/scrollY off zero and chop the
-   masthead's left edge out of view. Locking html/body/#root to the viewport
-   box directly — fixed position, exact vw/vh sizing, overflow hidden — makes
-   window scroll structurally impossible rather than merely suppressed by
-   overscroll-behavior, which only ever addressed the rubber-band bounce.
-   !important guards against Leaflet's own stylesheet (loaded later, inside
-   the lazy map chunk) asserting a conflicting overflow on these selectors. */
+/* UOW-16 Task 16.2 / UOW-18 Task 18.1 / UOW-19.5 Task 19.5.1: viewport
+   ghost-scroll hardening. The app shell is itself position:fixed inset-0, so
+   nothing in the document flow should ever scroll — but a fixed-positioned
+   descendant does not stop its OWN ancestors (html/body) from being
+   scrollable, and Leaflet's flyTo/flyToBounds pans apply CSS transforms to
+   internal map panes that could, on some mobile browsers, nudge
+   window.scrollX/scrollY off zero and chop the masthead's left edge out of
+   view. html/body keep the hard overflow:hidden lock — THAT is what actually
+   makes window/document scroll structurally impossible; #root's own
+   overflow:hidden was inert for that purpose (its one child, App's own
+   fixed inset-0 wrapper, is itself position:fixed and so never contributes
+   to #root's scrollable box in the first place) but its `!important` was
+   found to interfere with WebKit's touch-scroll gesture dispatch to
+   descendant containers, so 19.5 drops it from #root specifically and gives
+   #root its own explicit overflow instead. touch-action: pan-y centralizes
+   vertical-only touch panning at the shell level — horizontal touch-scroll
+   inside descendants (e.g. wide tables) is intentionally not carried through
+   this pass; see AlertDesk.jsx/DiagnosticBrief.jsx (UOW-19.5 Task 19.5.2). */
 html,
 body,
 #root {
@@ -19,8 +25,18 @@ body,
   inset: 0;
   width: 100vw;
   height: 100vh;
-  overflow: hidden !important;
+  touch-action: pan-y;
   overscroll-behavior: none;
+}
+
+html,
+body {
+  overflow: hidden !important;
+}
+
+#root {
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 /* Leaflet needs an explicit height on its container; the map fills the app shell. */
