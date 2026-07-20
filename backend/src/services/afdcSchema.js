@@ -50,7 +50,13 @@ let migrated = null;
 // AFDC-199996 snaps to the measured signature. Version jumps straight past
 // v10 per the PO's numbering; the gate only tests inequality, so any cached
 // pre-v11 registry (and its tier-2 snapshot) is shredded on boot regardless.
-export const AFDC_SEED_VERSION = 11;
+// v12 (UOW-18 Task 18.2): two more surveyed Leland-sector sites join the
+// ground-truth dictionary — AFDC-199994 Blink Charging (Ocean Hwy E) and
+// AFDC-199993 EnviroSpark Charging (Belville). AFDC-199996 keeps its v11
+// crosshair coordinate; the PO's 18.2 sheet still lists the earlier Olde
+// Regent Way estimate for it, but regressing a verified survey fix would be
+// a step backward, not a correction.
+export const AFDC_SEED_VERSION = 12;
 
 export function ensureAfdcSchema() {
   if (migrated) return migrated;

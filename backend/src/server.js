@@ -37,7 +37,7 @@ import {
   ensureSpatialCorrectionsSchema,
   listCorrections,
   applyCorrection,
-  runReconciliationBatch,
+  runLelandReconciliationSweep,
   startSpatialReconciliation,
 } from './services/spatialCorrections.js';
 
@@ -435,11 +435,11 @@ app.post('/api/v1/registry/spatial-corrections', (req, res) => {
   }
 });
 
-// Manual trigger for the background Nominatim/Pelias reconciliation sweep,
+// Manual trigger for the Leland-scoped Look-Near/Look-Far Overpass sweep,
 // outside its normal cadence (operator "reconcile now").
 app.post('/api/v1/registry/spatial-corrections/reconcile', async (_req, res) => {
   try {
-    res.json(await runReconciliationBatch());
+    res.json(await runLelandReconciliationSweep());
   } catch (err) {
     res.status(502).json({ error: err.message });
   }

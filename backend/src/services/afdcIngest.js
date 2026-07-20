@@ -456,6 +456,14 @@ function buildSeedRecord(afdcId, anchor, rand) {
 // 16.4 (crosshair fix): the Diagnostic Reference Pin measured the true
 // commercial retail plaza parking lot at exactly 34.217440/-78.018444 —
 // dictionary snapped to the surveyed crosshair signature, seed v11.
+// 18.2 (UAT Leland spike, seed v12): two more surveyed sites join the sector —
+//   AFDC-199994  Blink Charging (Ocean Hwy E)     34.2125, -78.0110
+//   AFDC-199993  EnviroSpark Charging (Belville)  34.2310, -77.9890
+// AFDC-199996's coordinate is NOT reset here — the 16.4 crosshair survey
+// (34.217440/-78.018444) stays authoritative over the earlier Olde Regent Way
+// plaza estimate the PO's 18.2 sheet still carries; regressing it would undo
+// a verified fix. The corresponding UAT_MANUAL row in station_spatial_corrections
+// (spatialCorrections.js) is likewise skipped for 199996 for the same reason.
 // These records are yielded verbatim ahead of the scatter loops: they never
 // enter jitter(), gauss(), or any other randomized noise path, and the
 // GROUND_TRUTH_SECTOR exclusion below bars procedural records from the sector
@@ -516,6 +524,42 @@ const GROUND_TRUTH_DICTIONARY = [
     ev_level2_evse_num: 2,
     ev_connector_types: ['J1772'],
     updated_at: '2026-07-19',
+  },
+  {
+    id: 199994,
+    station_name: 'Blink Charging (Ocean Hwy E)',
+    street_address: 'Ocean Hwy E',
+    city: 'Leland',
+    state: 'NC',
+    zip: '28451',
+    latitude: 34.2125,
+    longitude: -78.011,
+    fuel_type_code: 'ELEC',
+    access_days_time: '24 hours daily',
+    ev_network: 'Blink Network',
+    status_code: 'E', // OPEN
+    ev_dc_fast_num: null,
+    ev_level2_evse_num: 6,
+    ev_connector_types: ['J1772'],
+    updated_at: '2026-07-20',
+  },
+  {
+    id: 199993,
+    station_name: 'EnviroSpark Charging (Belville)',
+    street_address: 'Hwy 74',
+    city: 'Belville',
+    state: 'NC',
+    zip: '28451',
+    latitude: 34.231,
+    longitude: -77.989,
+    fuel_type_code: 'ELEC',
+    access_days_time: '24 hours daily',
+    ev_network: 'Non-Networked',
+    status_code: 'E', // OPEN
+    ev_dc_fast_num: null,
+    ev_level2_evse_num: 4,
+    ev_connector_types: ['J1772'],
+    updated_at: '2026-07-20',
   },
 ];
 
@@ -879,7 +923,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   console.log(`  registry rows:     ${result.stations} | rtree in sync: ${result.rtreeInSync}`);
   console.log(`  LA bbox spot-check: ${result.spatialSpotCheck} stations`);
   console.log(`  coastal spot-check: ${result.coastalSpotCheck} stations | ocean leaks: ${result.oceanLeaks}`);
-  console.log(`  Leland dictionary: ${result.dictionaryBound ? `all ${GROUND_TRUTH_DICTIONARY.length} bindings exact (199996 Smithfield's 34.217440,-78.018444 · 199997 Piggly Wiggly 34.2421,-77.9984 · 199999 Brunswick Forest 34.1954,-78.0231)` : 'absent (live registry)'} | sector strays: ${result.sectorStrays}`);
+  console.log(`  Leland dictionary: ${result.dictionaryBound ? `all ${GROUND_TRUTH_DICTIONARY.length} bindings exact (199996 Smithfield's 34.217440,-78.018444 · 199997 Piggly Wiggly 34.2421,-77.9984 · 199999 Brunswick Forest 34.1954,-78.0231 · 199994 Blink Charging 34.2125,-78.0110 · 199993 EnviroSpark 34.2310,-77.9890)` : 'absent (live registry)'} | sector strays: ${result.sectorStrays}`);
   console.log(`  peak heap:         ${result.peakHeapMB} MB | duration: ${result.durationMs} ms`);
   console.log(`  VERIFIED: ${result.verified}`);
 }

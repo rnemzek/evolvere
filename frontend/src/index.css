@@ -1,13 +1,25 @@
 @import "tailwindcss";
 
-/* UOW-16 Task 16.2: viewport ghost-scroll hardening. The app shell is
-   position:fixed inset-0, so nothing in the document flow should ever scroll —
-   overscroll-behavior kills the iOS/Android rubber-band bounce that dragged
-   the masthead and drawers off-screen during map pans. */
+/* UOW-16 Task 16.2 / UOW-18 Task 18.1: viewport ghost-scroll hardening. The
+   app shell is itself position:fixed inset-0, so nothing in the document
+   flow should ever scroll — but a fixed-positioned descendant does not stop
+   its OWN ancestors (html/body) from being scrollable, and Leaflet's flyTo/
+   flyToBounds pans apply CSS transforms to internal map panes that could, on
+   some mobile browsers, nudge window.scrollX/scrollY off zero and chop the
+   masthead's left edge out of view. Locking html/body/#root to the viewport
+   box directly — fixed position, exact vw/vh sizing, overflow hidden — makes
+   window scroll structurally impossible rather than merely suppressed by
+   overscroll-behavior, which only ever addressed the rubber-band bounce.
+   !important guards against Leaflet's own stylesheet (loaded later, inside
+   the lazy map chunk) asserting a conflicting overflow on these selectors. */
 html,
 body,
 #root {
-  height: 100%;
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden !important;
   overscroll-behavior: none;
 }
 

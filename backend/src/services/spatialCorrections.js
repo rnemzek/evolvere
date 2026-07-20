@@ -68,6 +68,14 @@ export function applyCorrection({ afdcId, correctedLat, correctedLng, source, de
   );
 }
 
+/** Look-Near primitive: the local cache check every reconciliation path runs first. */
+export function getCorrection(afdcId) {
+  ensureSpatialCorrectionsSchema();
+  return rowToCorrection(
+    getDb().prepare('SELECT * FROM station_spatial_corrections WHERE afdc_id = ?').get(afdcId)
+  );
+}
+
 export function listCorrections() {
   ensureSpatialCorrectionsSchema();
   return getDb()
@@ -76,25 +84,37 @@ export function listCorrections() {
     .map(rowToCorrection);
 }
 
-// --- Background Nominatim/Pelias reconciliation ---------------------------------
-// A small, rate-limited sweep that walks the registry in afdc_id order,
-// forward-geocodes each station's postal address, and writes a correction row
-// only when the geocoder's answer disagrees with the stored coordinate by
-// more than RECONCILE_DELTA_THRESHOLD_M — most stations never earn a row.
+// UOW-18 Task 18.2: hardcoded ground-truth baseline for the Leland UAT sector
+// spike — surveyed street coordinates, entered with explicit 'UAT_MANUAL'
+// provenance rather than the geocoder source tag. applyCorrection() upserts,
+// so re-running this at every boot is a no-op once written.
+//
+// AFDC-199996 (Tesla Supercharger / Smithfield's) is deliberately NOT
+// included: UOW-16 Task 16.4 already crosshair-surveyed it to a more precise
+// 34.217440/-78.018444 and marked it VERIFIED. The PO's 18.2 survey sheet
+// still carries the earlier Olde Regent Way estimate (34.2185/-78.0145) for
+// that same station — seeding it here would silently regress a verified fix
+// via the COALESCE override, so it's skipped rather than applied literally.
+const LELAND_UAT_BASELINE = [
+  { afdcId: 199999, correctedLat: 34.1954, correctedLng: -78.0231 }, // ChargePoint, Brunswick Forest
+  { afdcId: 199994, correctedLat: 34.2125, correctedLng: -78.011 }, // Blink Charging, Ocean Hwy E
+  { afdcId: 199993, correctedLat: 34.231, correctedLng: -77.989 }, // EnviroSpark Charging, Belville
+];
+
+export function seedLelandUatBaseline() {
+  ensureSpatialCorrectionsSchema();
+  for (const entry of LELAND_UAT_BASELINE) {
+    applyCorrection({ ...entry, source: 'UAT_MANUAL' });
+  }
+  return LELAND_UAT_BASELINE.length;
+}
+
+// --- Single-station reconciliation (Nominatim, cache-first) --------------------
 
 const GEOCODER_URL =
   process.env.PELIAS_URL || process.env.NOMINATIM_URL || 'https://nominatim.openstreetmap.org/search';
 const GEOCODER_SOURCE = process.env.PELIAS_URL ? 'pelias' : 'nominatim';
 const RECONCILE_DELTA_THRESHOLD_M = 100;
-// Nominatim's usage policy caps anonymous callers at 1 request/second; the
-// sweep serializes its own calls well under that ceiling regardless of tick
-// cadence, so it stays a good citizen even if SPATIAL_RECONCILE_BATCH is
-// raised for a larger deploy.
-const RECONCILE_MIN_INTERVAL_MS = 1100;
-const RECONCILE_BATCH_SIZE = Number(process.env.SPATIAL_RECONCILE_BATCH) || 3;
-const RECONCILE_TICK_MS = Number(process.env.SPATIAL_RECONCILE_INTERVAL_MS) || 30000;
-
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function geocodeStation(station) {
   const addressParts = [station.street_address, station.city, station.state, station.zip].filter(Boolean);
@@ -122,9 +142,17 @@ async function geocodeStation(station) {
   return Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null;
 }
 
-/** Reconcile one station's coordinate against the geocoder's answer. */
+/**
+ * Reconcile one station's coordinate on demand. UOW-18 Task 18.3 "Look Local
+ * First": a station that already carries a correction — manual or a prior
+ * geocoder hit — is treated as already reconciled and never re-triggers an
+ * external call; only a genuine cache miss reaches the geocoder.
+ */
 export async function reconcileStation(afdcId) {
+  ensureSpatialCorrectionsSchema();
   const database = getDb();
+  if (getCorrection(afdcId)) return { afdcId, status: 'cached' };
+
   const station = database.prepare('SELECT * FROM afdc_stations WHERE afdc_id = ?').get(afdcId);
   if (!station) return { afdcId, status: 'not-found' };
 
@@ -151,74 +179,144 @@ export async function reconcileStation(afdcId) {
   return { afdcId, status: 'corrected', deltaM: Math.round(deltaM), correction };
 }
 
-function ensureCursorTable(database) {
-  database.exec('CREATE TABLE IF NOT EXISTS spatial_reconcile_state (key TEXT PRIMARY KEY, value TEXT)');
+// --- Leland spike: Look-Near / Look-Far Overpass sweep (UOW-18 Task 18.3) ------
+// The "1X Incremental" pipeline proves itself on one controlled 15-mile pilot
+// area before any future expansion nationally. Look-Near: every candidate
+// station inside the radius that already has a station_spatial_corrections
+// row is skipped outright — no external call, cache wins. Look-Far: the
+// remainder is resolved in ONE Overpass radius query (amenity=charging_station)
+// covering the whole pilot area, rather than one geocode call per station —
+// far cheaper, and the shape Overpass's usage policy prefers.
+
+const KM_PER_DEG_LAT = 111.32;
+const LELAND_ANCHOR = { lat: 34.2174, lng: -78.0184 };
+const LELAND_RADIUS_MILES = 15;
+const LELAND_RADIUS_M = LELAND_RADIUS_MILES * 1609.34;
+const OVERPASS_URL = process.env.OVERPASS_URL || 'https://overpass-api.de/api/interpreter';
+// A returned POI more than this far from a candidate station isn't a match —
+// it's some other nearby charger Overpass happens to know about.
+const OVERPASS_MATCH_MAX_M = 300;
+const RECONCILE_TICK_MS = Number(process.env.SPATIAL_RECONCILE_INTERVAL_MS) || 30000;
+
+function lelandBoundingBox() {
+  const radiusKm = LELAND_RADIUS_M / 1000;
+  const dLat = radiusKm / KM_PER_DEG_LAT;
+  const dLng = radiusKm / (KM_PER_DEG_LAT * Math.max(0.2, Math.cos((LELAND_ANCHOR.lat * Math.PI) / 180)));
+  return {
+    minLat: LELAND_ANCHOR.lat - dLat,
+    maxLat: LELAND_ANCHOR.lat + dLat,
+    minLng: LELAND_ANCHOR.lng - dLng,
+    maxLng: LELAND_ANCHOR.lng + dLng,
+  };
 }
 
-function getCursor(database) {
-  ensureCursorTable(database);
-  const row = database.prepare("SELECT value FROM spatial_reconcile_state WHERE key = 'cursor'").get();
-  return row ? Number(row.value) : 0;
-}
-
-function setCursor(database, afdcId) {
-  database
-    .prepare(`INSERT INTO spatial_reconcile_state (key, value) VALUES ('cursor', ?)
-              ON CONFLICT(key) DO UPDATE SET value = excluded.value`)
-    .run(String(afdcId));
+async function fetchOverpassChargingStations() {
+  const query =
+    `[out:json][timeout:25];` +
+    `node["amenity"="charging_station"](around:${Math.round(LELAND_RADIUS_M)},${LELAND_ANCHOR.lat},${LELAND_ANCHOR.lng});` +
+    `out body;`;
+  const res = await fetch(OVERPASS_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Accept: 'application/json',
+      // Overpass's fair-use policy asks for an identifying User-Agent, same
+      // as Nominatim.
+      'User-Agent': 'nemzilla-evolvere-grid/1.0 (NOC prototype geospatial MDM reconciliation, Leland pilot)',
+    },
+    body: new URLSearchParams({ data: query }).toString(),
+    signal: AbortSignal.timeout(20000),
+  });
+  if (!res.ok) throw new Error(`Overpass responded ${res.status}`);
+  const body = await res.json();
+  return Array.isArray(body?.elements) ? body.elements : [];
 }
 
 /**
- * Process one small batch, resuming from wherever the last batch left off
- * (a cursor row, not an in-memory offset, so a restart resumes cleanly). Wraps
- * back to the start once every station has been walked once.
+ * Look-Near / Look-Far reconciliation pass restricted to the 15-mile Leland
+ * pilot radius. Cache hits (Look-Near) never touch the network; only
+ * uncached candidates fall through to the single Look-Far Overpass call.
  */
-export async function runReconciliationBatch(batchSize = RECONCILE_BATCH_SIZE) {
+export async function runLelandReconciliationSweep() {
   ensureSpatialCorrectionsSchema();
   const database = getDb();
-  let cursor = getCursor(database);
-  let page = database
-    .prepare('SELECT afdc_id FROM afdc_stations WHERE afdc_id > ? ORDER BY afdc_id LIMIT ?')
-    .all(cursor, batchSize);
-  if (page.length === 0) {
-    page = database.prepare('SELECT afdc_id FROM afdc_stations ORDER BY afdc_id LIMIT ?').all(batchSize);
+  const box = lelandBoundingBox();
+  const candidates = database
+    .prepare(`SELECT afdc_id, latitude, longitude FROM afdc_stations
+              WHERE latitude BETWEEN ? AND ? AND longitude BETWEEN ? AND ?`)
+    .all(box.minLat, box.maxLat, box.minLng, box.maxLng);
+
+  const uncached = candidates.filter((s) => !getCorrection(s.afdc_id));
+  if (uncached.length === 0) {
+    return { scope: 'leland-15mi', candidates: candidates.length, uncached: 0, poisFound: 0, matched: 0, corrected: 0 };
   }
 
-  const results = [];
-  for (let i = 0; i < page.length; i += 1) {
-    const afdcId = page[i].afdc_id;
-    try {
-      results.push(await reconcileStation(afdcId));
-    } catch (err) {
-      results.push({ afdcId, status: 'error', error: err.message });
+  const pois = await fetchOverpassChargingStations();
+
+  let matched = 0;
+  let corrected = 0;
+  for (const station of uncached) {
+    let bestPoi = null;
+    let bestM = Infinity;
+    for (const poi of pois) {
+      if (!Number.isFinite(poi.lat) || !Number.isFinite(poi.lon)) continue;
+      const m =
+        haversineKm(
+          { latitude: station.latitude, longitude: station.longitude },
+          { latitude: poi.lat, longitude: poi.lon }
+        ) * 1000;
+      if (m < bestM) {
+        bestM = m;
+        bestPoi = poi;
+      }
     }
-    setCursor(database, afdcId);
-    if (i < page.length - 1) await sleep(RECONCILE_MIN_INTERVAL_MS);
+    if (!bestPoi || bestM > OVERPASS_MATCH_MAX_M) continue;
+    matched += 1;
+    if (bestM < RECONCILE_DELTA_THRESHOLD_M) continue;
+    applyCorrection({
+      afdcId: station.afdc_id,
+      correctedLat: bestPoi.lat,
+      correctedLng: bestPoi.lon,
+      source: 'overpass',
+      deltaM: Math.round(bestM),
+    });
+    corrected += 1;
   }
-  return { processed: results.length, results };
+
+  return {
+    scope: 'leland-15mi',
+    candidates: candidates.length,
+    uncached: uncached.length,
+    poisFound: pois.length,
+    matched,
+    corrected,
+  };
 }
 
 let reconcileTimer = null;
 
-/** Boot hook: arms the background sweep on an unref'd interval. Never blocks boot. */
+/** Boot hook: arms the Leland-scoped background sweep on an unref'd interval. */
 export function startSpatialReconciliation() {
   ensureSpatialCorrectionsSchema();
+  seedLelandUatBaseline();
   if (reconcileTimer) return;
   reconcileTimer = setInterval(() => {
-    runReconciliationBatch().catch((err) =>
-      console.warn(`Spatial MDM reconciliation batch failed (non-fatal): ${err.message}`)
+    runLelandReconciliationSweep().catch((err) =>
+      console.warn(`Spatial MDM reconciliation sweep failed (non-fatal): ${err.message}`)
     );
   }, RECONCILE_TICK_MS);
   reconcileTimer.unref();
   console.log(
-    `[boot] spatial MDM reconciliation armed: batch=${RECONCILE_BATCH_SIZE} every ${RECONCILE_TICK_MS}ms | ` +
-    `source=${GEOCODER_SOURCE} (${GEOCODER_URL}) | correction threshold=${RECONCILE_DELTA_THRESHOLD_M}m`
+    `[boot] spatial MDM reconciliation armed: Leland 15mi pilot every ${RECONCILE_TICK_MS}ms | ` +
+    `source=overpass (${OVERPASS_URL}) | correction threshold=${RECONCILE_DELTA_THRESHOLD_M}m | ` +
+    `UAT baseline: ${LELAND_UAT_BASELINE.length} manually-surveyed sites seeded`
   );
 }
 
 // Standalone runner: `node src/services/spatialCorrections.js`
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const result = await runReconciliationBatch();
-  console.log('Spatial MDM reconciliation batch complete');
-  for (const r of result.results) console.log(`  AFDC-${r.afdcId}: ${r.status}${r.deltaM ? ` (${r.deltaM}m)` : ''}`);
+  seedLelandUatBaseline();
+  const result = await runLelandReconciliationSweep();
+  console.log('Leland spatial MDM reconciliation sweep complete');
+  console.log(`  ${JSON.stringify(result)}`);
 }
