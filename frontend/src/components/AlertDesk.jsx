@@ -74,7 +74,7 @@ function LoadingSkeleton() {
   )
 }
 
-function AlertDesk() {
+function AlertDesk({ selectedAlertId, onSelectAlert }) {
   const [{ phase, alerts }, dispatch] = useReducer(deskReducer, initialDeskState)
   // Task 13.4 operator filters. Pure view concerns: they never enter the
   // reducer — the raw ledger stays the single source of truth, and the visible
@@ -233,8 +233,12 @@ function AlertDesk() {
 
       {/* scrollbar-gutter reserves the rail even while content fits, so an
           eviction that drops the list below the overflow threshold never
-          reflows the table width when the scrollbar vanishes. */}
-      <div className="flex-1 min-h-0 overflow-y-auto [scrollbar-gutter:stable]">
+          reflows the table width when the scrollbar vanishes. Task 19.1.1:
+          overflow-x-auto + touch-pan-x let a narrow viewport pan across the
+          6-column ledger with a thumb-drag; touch-pan-y rides alongside it
+          (Tailwind's touch-action utilities compose) so the existing
+          vertical row-list scroll gesture keeps working unmodified. */}
+      <div className="flex-1 min-h-0 w-full overflow-y-auto overflow-x-auto touch-pan-x touch-pan-y [scrollbar-gutter:stable]">
         {phase === 'loading' ? (
           <LoadingSkeleton />
         ) : phase === 'error' ? (
@@ -244,13 +248,14 @@ function AlertDesk() {
         ) : filteredAlerts.length === 0 ? (
           <DeskNotice>No incidents match the active filters.</DeskNotice>
         ) : (
-          <table className="w-full border-collapse text-left text-sm">
+          <table className="w-full min-w-[720px] border-collapse text-left text-sm">
             <caption className="sr-only">
               Active incident desk: showing {filteredAlerts.length} of {alerts.length} incidents
               under the current severity and search filters, sorted by severity, critical first,
               then by most recent activity. Columns list severity, station identity and network,
-              fault type, latest message, grouped event count, and last seen time. Resolved
-              incidents dim in place until cleared.
+              fault type, latest message, grouped event count, and last seen time. Select a row to
+              generate its Nemzilla AI Diagnostic Brief. Resolved incidents dim in place until
+              cleared.
             </caption>
             <thead>
               <tr>
@@ -263,48 +268,67 @@ function AlertDesk() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/80">
-              {filteredAlerts.map((alert) => (
-                <tr
-                  key={alert.id}
-                  className={`${
-                    alert.resolving ? 'alert-desk-row-resolving' : 'alert-desk-row-enter'
-                  } hover:bg-slate-800/40`}
-                >
-                  <td className="px-4 py-2.5 whitespace-nowrap">
-                    <span
-                      className={`inline-block rounded border px-2 py-0.5 text-[11px] font-bold tracking-wider ${
-                        SEVERITY_BADGES[alert.severity] ?? SEVERITY_BADGES.INFO
-                      }`}
-                    >
-                      {alert.severity}
-                    </span>
-                    {alert.resolving && (
-                      <span className="ml-2 inline-block rounded border border-emerald-700/60 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-bold tracking-wider text-emerald-300">
-                        RESOLVED
+              {filteredAlerts.map((alert) => {
+                const rowSelected = selectedAlertId === alert.id
+                const selectRow = () => onSelectAlert?.(alert)
+                return (
+                  <tr
+                    key={alert.id}
+                    tabIndex={onSelectAlert ? 0 : undefined}
+                    aria-selected={onSelectAlert ? rowSelected : undefined}
+                    onClick={onSelectAlert ? selectRow : undefined}
+                    onKeyDown={
+                      onSelectAlert
+                        ? (event) => {
+                            if (event.key === 'Enter' || event.key === ' ') {
+                              event.preventDefault()
+                              selectRow()
+                            }
+                          }
+                        : undefined
+                    }
+                    className={`${
+                      alert.resolving ? 'alert-desk-row-resolving' : 'alert-desk-row-enter'
+                    } ${rowSelected ? 'bg-cyan-500/10' : 'hover:bg-slate-800/40'} ${
+                      onSelectAlert ? 'cursor-pointer focus-visible:outline-2 focus-visible:outline-cyan-400 focus-visible:-outline-offset-2' : ''
+                    }`}
+                  >
+                    <td className="px-4 py-2.5 whitespace-nowrap">
+                      <span
+                        className={`inline-block rounded border px-2 py-0.5 text-[11px] font-bold tracking-wider ${
+                          SEVERITY_BADGES[alert.severity] ?? SEVERITY_BADGES.INFO
+                        }`}
+                      >
+                        {alert.severity}
                       </span>
-                    )}
-                  </td>
-                  <td className="px-4 py-2.5 whitespace-nowrap">
-                    <span className="block text-xs text-slate-200">
-                      {alert.stationName ?? alert.stationId}
-                    </span>
-                    <span className="block font-mono text-[11px] text-cyan-300/90">
-                      {alert.stationId}
-                      {alert.network && <span className="text-slate-500"> · {alert.network}</span>}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2.5 text-xs text-slate-400 whitespace-nowrap">{alert.type}</td>
-                  <td className="px-4 py-2.5 max-w-xs truncate text-slate-200" title={alert.message}>
-                    {alert.message}
-                  </td>
-                  <td className="px-4 py-2.5 text-right tabular-nums text-slate-300">
-                    ×{alert.eventCount}
-                  </td>
-                  <td className="px-4 py-2.5 text-right tabular-nums text-xs text-slate-400 whitespace-nowrap">
-                    <time dateTime={lastActivity(alert)}>{formatSeen(alert)}</time>
-                  </td>
-                </tr>
-              ))}
+                      {alert.resolving && (
+                        <span className="ml-2 inline-block rounded border border-emerald-700/60 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-bold tracking-wider text-emerald-300">
+                          RESOLVED
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-2.5 whitespace-nowrap">
+                      <span className="block text-xs text-slate-200">
+                        {alert.stationName ?? alert.stationId}
+                      </span>
+                      <span className="block font-mono text-[11px] text-cyan-300/90">
+                        {alert.stationId}
+                        {alert.network && <span className="text-slate-500"> · {alert.network}</span>}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2.5 text-xs text-slate-400 whitespace-nowrap">{alert.type}</td>
+                    <td className="px-4 py-2.5 max-w-xs truncate text-slate-200" title={alert.message}>
+                      {alert.message}
+                    </td>
+                    <td className="px-4 py-2.5 text-right tabular-nums text-slate-300">
+                      ×{alert.eventCount}
+                    </td>
+                    <td className="px-4 py-2.5 text-right tabular-nums text-xs text-slate-400 whitespace-nowrap">
+                      <time dateTime={lastActivity(alert)}>{formatSeen(alert)}</time>
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         )}

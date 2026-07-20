@@ -58,7 +58,51 @@ function FinancialMatrix() {
         ) : !matrix ? (
           <p className="p-4 text-sm text-slate-400">Computing tariff ledger…</p>
         ) : (
-          <table className="w-full min-w-[560px] text-sm">
+          <>
+            {/* Task 19.1.2: compact 4-line card per station below sm — the
+                6-column table reads as a squeezed, sideways-scrolling mess at
+                phone widths, so mobile gets its own glanceable layout instead
+                of shrinking the desktop one. Both this and the table below
+                render; Tailwind's display toggle picks one per breakpoint. */}
+            <ul className="block sm:hidden divide-y divide-slate-800/60" aria-label="Station financial ledger, mobile view">
+              {matrix.stations.map((s) => {
+                const burning = s.netMargin < 0
+                return (
+                  <li
+                    key={s.stationId}
+                    data-station-id={s.stationId}
+                    data-margin-state={burning ? 'burning' : 'earning'}
+                    className={`p-4 space-y-1 ${burning ? 'bg-rose-950/20' : ''}`}
+                  >
+                    <div className="flex items-baseline gap-2">
+                      <p className="flex-1 min-w-0 truncate font-semibold text-slate-200">{s.name}</p>
+                      <p className="shrink-0 whitespace-nowrap tabular-nums text-slate-300">
+                        {usd(s.grossRevenue)}
+                      </p>
+                    </div>
+                    <p className="text-xs text-slate-400">{s.stationId}</p>
+                    <p className="text-xs text-slate-400">
+                      {[s.town, s.state].filter(Boolean).join(', ') || '—'}
+                    </p>
+                    {(s.activeGridSag || s.idlePenalty > 0) && (
+                      <div className="flex gap-2">
+                        {s.activeGridSag && (
+                          <span className="whitespace-nowrap px-1.5 py-0.5 rounded border border-amber-700 text-amber-400 text-xs">
+                            GRID SAG
+                          </span>
+                        )}
+                        {s.idlePenalty > 0 && (
+                          <span className="whitespace-nowrap px-1.5 py-0.5 rounded border border-slate-600 text-slate-300 text-xs">
+                            IDLE {Math.round(s.idleMinutes)}m
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </li>
+                )
+              })}
+            </ul>
+            <table className="hidden sm:table w-full min-w-[560px] text-sm">
             <caption className="sr-only">
               Earning versus Burning financial ledger: {matrix.returned} stations ranked by net
               operational margin, worst first. {matrix.burnerCount} stations fleet-wide are
@@ -119,6 +163,7 @@ function FinancialMatrix() {
               })}
             </tbody>
           </table>
+          </>
         )}
       </div>
     </section>

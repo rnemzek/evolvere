@@ -1,4 +1,4 @@
-import { generateDiagnosticBrief } from '../services/alertEngine.js'
+import { generateDiagnosticBrief, generateLedgerBrief } from '../services/alertEngine.js'
 
 const CAUSE_LABELS = {
   EXTERNAL_GRID_FAILURE: 'External · Grid',
@@ -7,7 +7,12 @@ const CAUSE_LABELS = {
   LOCAL_HARDWARE: 'Local Hardware',
 }
 
-function DiagnosticBrief({ alert, briefs = [] }) {
+// UOW-19.1 Task 19.1.1: the panel now also renders for a selected Alert Desk
+// ledger incident (`ledgerAlert`) — a distinct shape from the fault-level
+// `alert` prop (chargerId/connectorId/code) it already served. Whichever the
+// operator selected most recently wins; App.jsx enforces that mutual
+// exclusivity, this component just renders whichever prop is non-null.
+function DiagnosticBrief({ alert, ledgerAlert, briefs = [] }) {
   // Server-enriched briefs are pre-computed at fault time; the client
   // generator only backfills alert types without a persisted record
   // (suspensions, zero-output trends, session terminations).
@@ -29,7 +34,22 @@ function DiagnosticBrief({ alert, briefs = [] }) {
       </header>
 
       <div className="p-4">
-        {alert ? (
+        {ledgerAlert ? (
+          <>
+            <p className="text-xs font-mono text-slate-400 mb-3 flex items-center gap-2 flex-wrap">
+              <span>
+                {ledgerAlert.stationName ?? ledgerAlert.stationId} · {ledgerAlert.stationId}
+                {ledgerAlert.network && ` · ${ledgerAlert.network}`}
+              </span>
+              <span className="rounded-full border border-cyan-700 bg-cyan-500/10 px-2 py-0.5 text-[10px] font-bold tracking-wide text-cyan-300">
+                {CAUSE_LABELS[ledgerAlert.type] ?? ledgerAlert.type}
+              </span>
+            </p>
+            <p className="text-sm leading-relaxed text-slate-200 whitespace-pre-line">
+              {generateLedgerBrief(ledgerAlert)}
+            </p>
+          </>
+        ) : alert ? (
           <>
             <p className="text-xs font-mono text-slate-400 mb-3 flex items-center gap-2 flex-wrap">
               <span>

@@ -74,6 +74,30 @@ function makeAlert(code, station, connector, timestamp) {
   }
 }
 
+// UOW-19.1 Task 19.1.1: client-side brief synthesis for the unified alerts
+// ledger (AlertDesk incidents) — a sibling to generateDiagnosticBrief below,
+// same "no persisted record yet, fabricate from what the wire gave us"
+// pattern, but keyed on the ledger's stationId/type/message shape instead of
+// the fault-level chargerId/connectorId/code shape.
+const LEDGER_CAUSE_TEXT = {
+  EXTERNAL_GRID_FAILURE:
+    'Probable Cause: Regional utility grid outage, confirmed via live county-outage correlation against the AFDC registry. ' +
+    'Recommended Action: Do not dispatch field technicians — escalate to the utility grid manager and monitor for automatic recovery on grid restoration.',
+  EXTERNAL_NETWORK_DROP:
+    'Probable Cause: Regional carrier network outage upstream of the charging hardware. ' +
+    'Recommended Action: Verify site-host Wi-Fi fallback connectivity before considering dispatch; offline sessions continue locally and billing data backfills on reconnection.',
+}
+
+export function generateLedgerBrief(alert) {
+  const cause =
+    LEDGER_CAUSE_TEXT[alert.type] ??
+    `Probable Cause: ${alert.type.replace(/_/g, ' ').toLowerCase()} condition reported at ${
+      alert.stationName ?? alert.stationId
+    }${alert.eventCount > 1 ? ` (recurred ${alert.eventCount}×)` : ''}. ` +
+      'Recommended Action: Review the incident detail below and dispatch per standard severity SOP if the condition persists.'
+  return `[Nemzilla AI Analysis]: ${alert.message} ${cause}`
+}
+
 /**
  * Mock generative triage briefs — canned per fault category, parameterized per
  * alert, standing in for a live LLM diagnostic call.

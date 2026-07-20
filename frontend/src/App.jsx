@@ -86,6 +86,11 @@ function App() {
   const [briefs, setBriefs] = useState([])
   const [selectedStationId, setSelectedStationId] = useState(null)
   const [selectedAlert, setSelectedAlert] = useState(null)
+  // UOW-19.1 Task 19.1.1: Alert Desk row selection (unified ledger incidents)
+  // feeds the same Diagnostic Brief panel as the fault-level Alert Table.
+  // Whichever the operator clicked most recently wins — selecting in one
+  // list clears the other so the brief never shows a stale combination.
+  const [selectedLedgerAlert, setSelectedLedgerAlert] = useState(null)
   const [controlPanelOpen, setControlPanelOpen] = useState(false)
   const [registryProfile, setRegistryProfile] = useState(null)
 
@@ -199,7 +204,13 @@ function App() {
         <main className="flex-1 max-w-full overflow-y-auto overflow-x-hidden overscroll-contain p-4 space-y-4">
           <KPIStats stations={stations} transactions={transactions} />
           <ROIPanel stations={stations} />
-          <AlertDesk />
+          <AlertDesk
+            selectedAlertId={selectedLedgerAlert?.id}
+            onSelectAlert={(alert) => {
+              setSelectedLedgerAlert(alert)
+              setSelectedAlert(null)
+            }}
+          />
           <DispatchBoard />
           <div className="grid gap-4 lg:grid-cols-3">
             <div className="lg:col-span-2">
@@ -207,10 +218,13 @@ function App() {
                 alerts={alerts}
                 briefs={briefs}
                 selectedAlertId={selectedAlert?.id}
-                onSelectAlert={setSelectedAlert}
+                onSelectAlert={(alert) => {
+                  setSelectedAlert(alert)
+                  setSelectedLedgerAlert(null)
+                }}
               />
             </div>
-            <DiagnosticBrief alert={selectedAlert} briefs={briefs} />
+            <DiagnosticBrief alert={selectedAlert} ledgerAlert={selectedLedgerAlert} briefs={briefs} />
           </div>
         </main>
       )}
