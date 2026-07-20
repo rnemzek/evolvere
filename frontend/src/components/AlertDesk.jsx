@@ -233,12 +233,18 @@ function AlertDesk({ selectedAlertId, onSelectAlert }) {
 
       {/* scrollbar-gutter reserves the rail even while content fits, so an
           eviction that drops the list below the overflow threshold never
-          reflows the table width when the scrollbar vanishes. Task 19.1.1:
-          overflow-x-auto + touch-pan-x let a narrow viewport pan across the
-          6-column ledger with a thumb-drag; touch-pan-y rides alongside it
-          (Tailwind's touch-action utilities compose) so the existing
-          vertical row-list scroll gesture keeps working unmodified. */}
-      <div className="flex-1 min-h-0 w-full overflow-y-auto overflow-x-auto touch-pan-x touch-pan-y [scrollbar-gutter:stable]">
+          reflows the table width when the scrollbar vanishes. Task 19.2.1:
+          touch-auto (touch-action: auto) hands both axes to the browser's
+          native scroll handling instead of the touch-pan-x/touch-pan-y
+          composition from 19.1.1 — same independent 2-axis result, browser-
+          native rather than hand-composed. max-h-[320px] bounds the region
+          explicitly (the flex-1 parent's h-96 shell already constrains it
+          similarly) and -webkit-overflow-scrolling:touch keeps iOS Safari's
+          scroll momentum smooth. This still nests safely inside the UOW-18
+          root viewport lock: the lock only forbids the DOCUMENT (html/body)
+          from scrolling — a bounded descendant's own overflow region is
+          exactly the escape valve fixed-shell layouts are supposed to use. */}
+      <div className="flex-1 min-h-0 w-full max-h-[320px] overflow-y-auto overflow-x-auto touch-auto [-webkit-overflow-scrolling:touch] [scrollbar-gutter:stable]">
         {phase === 'loading' ? (
           <LoadingSkeleton />
         ) : phase === 'error' ? (

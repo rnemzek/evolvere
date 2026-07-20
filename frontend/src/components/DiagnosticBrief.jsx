@@ -33,7 +33,12 @@ function DiagnosticBrief({ alert, ledgerAlert, briefs = [] }) {
         </h2>
       </header>
 
-      <div className="p-4">
+      {/* Task 19.2.1: long AI brief text (grid-outage messages especially) can
+          run past the panel's natural height — an independent bounded scroll
+          region lets it pan on its own without the swipe escaping to drag the
+          fixed-shell page underneath. -webkit-overflow-scrolling:touch keeps
+          the scroll momentum-smooth on iOS Safari specifically. */}
+      <div className="p-4 overflow-y-auto max-h-[280px] touch-auto [-webkit-overflow-scrolling:touch]">
         {ledgerAlert ? (
           <>
             <p className="text-xs font-mono text-slate-400 mb-3 flex items-center gap-2 flex-wrap">
