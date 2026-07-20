@@ -33,12 +33,9 @@ function DiagnosticBrief({ alert, ledgerAlert, briefs = [] }) {
         </h2>
       </header>
 
-      {/* Task 19.5.2: reverted to plain Tailwind — the root-level fix
-          (index.css, Task 19.5.1) is what actually governs touch-scroll
-          routing now, so this panel just needs a bounded vertical-scroll
-          region, not its own inline touch-action/WebkitOverflowScrolling
-          machinery. */}
-      <div className="p-4 max-h-[250px] overflow-y-auto">
+      {/* Task 19.6.3: Clean Mobile Shell Reset — plain overflow-y-auto, no
+          touch-action/inline-style machinery from 19.2-19.5. */}
+      <div className="w-full overflow-y-auto max-h-60 p-4">
         {ledgerAlert ? (
           <>
             <p className="text-xs font-mono text-slate-400 mb-3 flex items-center gap-2 flex-wrap">

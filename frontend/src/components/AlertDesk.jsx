@@ -231,26 +231,17 @@ function AlertDesk({ selectedAlertId, onSelectAlert }) {
         )}
       </form>
 
-      {/* Task 19.5.2: the root-level fix (index.css, Task 19.5.1) is now
-          where touch-scroll routing actually lives — html/body keep the hard
-          document-scroll lock, #root carries its own overflow-y:auto, and
-          touch-action:pan-y is centralized at the shell level. That makes
-          the component-level machinery from 19.3 (axis-split nested
-          wrappers) and 19.4 (inline hard-pixel-height styles) unnecessary
-          complexity for what plain Tailwind utilities already express.
-          flex-1 min-h-0 kept (not in the PO's literal class list) for the
-          same reason as 19.3: without it a short incident list leaves a
-          blank gap above the footer inside the fixed h-96 shell. Horizontal
-          scroll on the wide ledger table is intentionally NOT carried
-          through this pass — 19.5.1 states horizontal scroll should remain
-          blocked at the shell level; the table's own min-w-[720px] (added in
-          19.1.1 to make the now-abandoned horizontal scroll meaningful) is
-          dropped here too, so the 6 columns squeeze to fit the viewport
-          instead of a fixed-width table getting clipped with no way to pan
-          to the rest. Narrow phones will read tighter columns rather than
-          losing content outright — a real trade-off, flagged in the doc
-          update, not silently dropped. */}
-      <div className="flex-1 min-h-0 w-full max-h-[300px] overflow-y-auto [scrollbar-gutter:stable]">
+      {/* Task 19.6.3: Clean Mobile Shell Reset — plain overflow-x-auto/
+          overflow-y-auto, no touch-action/overscroll-contain/inline-style
+          machinery from 19.2-19.5. Horizontal scroll on the ledger table is
+          restored (min-w-[650px] below) since the shell-level touch-action
+          lock that blocked it in 19.5 is gone. Trade-off: no flex-1/min-h-0
+          this round (matching the PO's plain max-h-72 spec exactly) — a
+          short incident list now leaves visible space above the footer
+          inside the section's h-96 shell rather than the region stretching
+          to fill it. No CLS risk (the section's own height never moves),
+          just a look change on sparse ledgers. */}
+      <div className="w-full overflow-x-auto overflow-y-auto max-h-72">
         {phase === 'loading' ? (
           <LoadingSkeleton />
         ) : phase === 'error' ? (
@@ -260,7 +251,7 @@ function AlertDesk({ selectedAlertId, onSelectAlert }) {
         ) : filteredAlerts.length === 0 ? (
           <DeskNotice>No incidents match the active filters.</DeskNotice>
         ) : (
-          <table className="w-full border-collapse text-left text-sm">
+          <table className="w-full min-w-[650px] border-collapse text-left text-sm">
             <caption className="sr-only">
               Active incident desk: showing {filteredAlerts.length} of {alerts.length} incidents
               under the current severity and search filters, sorted by severity, critical first,

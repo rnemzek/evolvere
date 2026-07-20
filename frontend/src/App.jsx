@@ -133,14 +133,13 @@ function App() {
   )
 
   return (
-    // UOW-16 Task 16.2: fixed inset-0 pins the shell to the visual viewport —
-    // h-screen tracked the layout viewport, so mobile URL-bar collapse plus
-    // body overscroll let the masthead drift ("ghost scrolling"). touch-none
-    // kills native panning on the shell itself; it is NOT consulted for
-    // descendants that sit inside their own scroll container (the Dashboard/
-    // Financials mains, the map tray) or for Leaflet's pointer-event pipeline,
-    // so a thumb-drag pans exactly one thing: the map canvas.
-    <div className="fixed inset-0 overflow-hidden overscroll-none touch-none bg-slate-950 text-slate-100 flex flex-col">
+    // UOW-19.6 Task 19.6.2: Clean Mobile Shell Reset — standard document flow
+    // instead of the position:fixed inset-0 shell from UOW-16 Task 16.2
+    // onward. min-h-screen + flex flex-col is the ordinary "full-viewport-tall
+    // column, content areas grow to fill it" pattern; individual scroll
+    // regions (Dashboard/Financials mains, AlertDesk, DiagnosticBrief) bound
+    // themselves locally rather than the shell suppressing scroll globally.
+    <div className="min-h-screen w-full bg-slate-950 text-slate-100 flex flex-col">
       <header className="z-[1000] w-full max-w-full left-0 right-0 box-border shrink-0 overflow-x-hidden flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-slate-800 bg-slate-900/85 backdrop-blur">
         <div className="min-w-0">
           <h1 className="text-sm font-bold tracking-widest text-cyan-400 truncate">
