@@ -64,7 +64,22 @@ let migrated = null;
 // once a real geocoder hit lands, NULL until then) replaces the dictionary's
 // hardcoded-anchor concept: precision is now a property any station in the
 // fleet can earn, not a privilege reserved for five hand-picked ids.
-export const AFDC_SEED_VERSION = 13;
+// v14 (UOW-22): dual-coordinate persistence. The deterministic synthetic seed
+// generator is retired outright (no tier-3 fallback) — the registry now only
+// ever holds afdc-live or authentic-snapshot rows. Every row keeps BOTH its
+// raw source coordinate (afdc_latitude/afdc_longitude/afdc_geocode_status,
+// verbatim from the AFDC record — 'PRESENT' when the record carried a valid
+// point, 'MISSING' when it did not) and an independently-derived coordinate
+// (geocoded_latitude/geocoded_longitude, filled in by the same geocodeEngine.js
+// pipeline as v13) side by side, so operators can audit the two against each
+// other rather than the fleet silently trusting one source. latitude/longitude
+// remain the active render columns, but are no longer NOT NULL: a record with
+// no native point sits without a pin until the geocode backfill resolves one.
+// precision_score now spans three tiers — NATIVE_GPS (the AFDC source point,
+// preferred whenever present, since it's the field-surveyed coordinate),
+// ROOFTOP_INTERPOLATED (full-address geocode match), ZIP_CENTROID (last-resort
+// zip-only geocode match) — instead of the v13 binary ROOFTOP_INTERPOLATED/NULL.
+export const AFDC_SEED_VERSION = 14;
 
 export function ensureAfdcSchema() {
   if (migrated) return migrated;
@@ -96,23 +111,28 @@ export function ensureAfdcSchema() {
 
   database.exec(`
     CREATE TABLE IF NOT EXISTS afdc_stations (
-      afdc_id          INTEGER PRIMARY KEY,  -- AFDC source record id
-      station_name     TEXT NOT NULL,
-      street_address   TEXT,
-      city             TEXT,
-      state            TEXT,
-      zip              TEXT,
-      latitude         REAL NOT NULL,
-      longitude        REAL NOT NULL,
-      fuel_type_code   TEXT NOT NULL DEFAULT 'ELEC',
-      access_days_time TEXT,
-      ev_network       TEXT,                 -- operating network (ChargePoint, Tesla, …)
-      status_code      TEXT,                 -- AFDC: E=open, P=planned, T=temporarily unavailable
-      ev_dc_fast_num   INTEGER,              -- DC fast port count
-      ev_level2_num    INTEGER,              -- Level-2 port count
-      updated_at       TEXT,                 -- AFDC record freshness stamp
-      synced_at        TEXT NOT NULL,
-      precision_score  TEXT                  -- NULL | 'ROOFTOP_INTERPOLATED' (UOW-21 geocode-cleanse tag)
+      afdc_id            INTEGER PRIMARY KEY,  -- AFDC source record id
+      station_name       TEXT NOT NULL,
+      street_address     TEXT,
+      city               TEXT,
+      state              TEXT,
+      zip                TEXT,
+      latitude           REAL,                 -- active render pin (highest-precision available)
+      longitude          REAL,
+      afdc_latitude      REAL,                 -- raw AFDC source coordinate, verbatim
+      afdc_longitude     REAL,
+      afdc_geocode_status TEXT,                -- 'PRESENT' | 'MISSING' (did the source record carry a point)
+      geocoded_latitude  REAL,                  -- independently derived via geocodeEngine.js
+      geocoded_longitude REAL,
+      fuel_type_code     TEXT NOT NULL DEFAULT 'ELEC',
+      access_days_time   TEXT,
+      ev_network         TEXT,                 -- operating network (ChargePoint, Tesla, …)
+      status_code        TEXT,                 -- AFDC: E=open, P=planned, T=temporarily unavailable
+      ev_dc_fast_num     INTEGER,              -- DC fast port count
+      ev_level2_num      INTEGER,              -- Level-2 port count
+      updated_at         TEXT,                 -- AFDC record freshness stamp
+      synced_at          TEXT NOT NULL,
+      precision_score    TEXT                  -- NULL | 'NATIVE_GPS' | 'ROOFTOP_INTERPOLATED' | 'ZIP_CENTROID'
     );
     CREATE INDEX IF NOT EXISTS idx_afdc_state ON afdc_stations (state);
   `);
@@ -138,7 +158,8 @@ export function ensureAfdcSchema() {
       DROP TRIGGER IF EXISTS afdc_geo_after_update;
       DROP TRIGGER IF EXISTS afdc_geo_after_delete;
       CREATE TRIGGER afdc_geo_after_insert
-      AFTER INSERT ON afdc_stations BEGIN
+      AFTER INSERT ON afdc_stations
+      WHEN NEW.latitude IS NOT NULL AND NEW.longitude IS NOT NULL BEGIN
         DELETE FROM afdc_geo WHERE id = NEW.afdc_id;
         INSERT INTO afdc_geo
         VALUES (NEW.afdc_id, NEW.latitude, NEW.latitude, NEW.longitude, NEW.longitude);
@@ -147,7 +168,8 @@ export function ensureAfdcSchema() {
       AFTER UPDATE OF latitude, longitude ON afdc_stations BEGIN
         DELETE FROM afdc_geo WHERE id = NEW.afdc_id;
         INSERT INTO afdc_geo
-        VALUES (NEW.afdc_id, NEW.latitude, NEW.latitude, NEW.longitude, NEW.longitude);
+        SELECT NEW.afdc_id, NEW.latitude, NEW.latitude, NEW.longitude, NEW.longitude
+        WHERE NEW.latitude IS NOT NULL AND NEW.longitude IS NOT NULL;
       END;
       CREATE TRIGGER afdc_geo_after_delete
       AFTER DELETE ON afdc_stations BEGIN

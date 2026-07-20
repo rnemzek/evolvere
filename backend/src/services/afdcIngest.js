@@ -1,8 +1,7 @@
-import { createReadStream, createWriteStream, existsSync, mkdirSync, rmSync } from 'node:fs';
-import { once } from 'node:events';
+import { createReadStream, existsSync } from 'node:fs';
+import { rmSync } from 'node:fs';
 import { Readable } from 'node:stream';
-import { finished } from 'node:stream/promises';
-import { createGzip, createGunzip } from 'node:zlib';
+import { createGunzip } from 'node:zlib';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import chain from 'stream-chain';
@@ -11,32 +10,41 @@ import { pick } from 'stream-json/filters/pick.js';
 import { streamArray } from 'stream-json/streamers/stream-array.js';
 import { getDb } from './chargerDirectory.js';
 import { ensureAfdcSchema, queryStationsInBounds, AFDC_SEED_VERSION } from './afdcSchema.js';
-import { CORRIDORS } from './dataIngestionService.js';
 import { geocodeStationAddress } from './geocodeEngine.js';
 
 // UOW-11 Task 11.2: bulk NREL AFDC ingestion pipeline. The registry payload
-// (~75,000 US public ELEC stations) never materializes in memory — the source
-// byte stream (live HTTPS, or a local raw/gzip snapshot) flows through
-// stream-json token-by-token, `pick` isolates the `fuel_stations` array, and
-// `streamArray` re-assembles one station object at a time. Records accumulate
-// into 2,000-row batches, each committed inside an explicit BEGIN/COMMIT
-// transaction so SQLite journals sequentially instead of fsyncing per row; the
-// Task 11.1 base-table triggers carry every batch into the afdc_geo R*Tree
-// within the same transaction, so this pipeline never touches the index.
+// never materializes in memory — the source byte stream (live HTTPS, or a
+// local raw/gzip snapshot) flows through stream-json token-by-token, `pick`
+// isolates the `fuel_stations` array, and `streamArray` re-assembles one
+// station object at a time. Records accumulate into 2,000-row batches, each
+// committed inside an explicit BEGIN/COMMIT transaction so SQLite journals
+// sequentially instead of fsyncing per row; the Task 11.1 base-table triggers
+// carry every batch into the afdc_geo R*Tree within the same transaction, so
+// this pipeline never touches the index.
+//
+// UOW-22 Task 22.1: the deterministic synthesized-seed tier is retired
+// outright — the registry now only ever holds authentic AFDC records, either
+// fetched live or replayed from a local authentic snapshot. There is no
+// synthetic fallback; if both tiers fail, ingestion simply yields zero rows.
 //
 // Source tiers (first success wins):
-//   1. nrel-live        — streamed fetch of the AFDC registry (NREL_API_KEY,
+//   1. afdc-live        — streamed fetch of the AFDC registry (NREL_API_KEY,
 //                         DEMO_KEY default; throttling/4xx fall through)
-//   2. local-snapshot   — backend/data/afdc_snapshot.json[.gz]
-//   3. synthesized-seed — deterministic AFDC-shaped snapshot written to disk
-//                         (metro-weighted + interstate-corridor distribution),
-//                         then ingested through the same streaming path
+//   2. local-snapshot   — backend/data/afdc_snapshot.json[.gz], an authentic
+//                         (non-synthetic) point-in-time capture of tier 1
 
 export const AFDC_TARGET = 75000;
 export const BATCH_SIZE = 2000;
 const WARM_FLOOR = Math.floor(AFDC_TARGET * 0.8); // below this, re-ingest at boot
 
-const AFDC_API_BASE = 'https://developer.nrel.gov/api/alt-fuel-stations/v1.json';
+// UOW-22 Task 22.1 (PO directive, confirmed after independent verification):
+// the upstream host moves from developer.nrel.gov to developer.nlr.gov. This
+// is NOT the same domain NREL publishes — verified live before wiring it in:
+// it resolves on real .gov/api.data.gov infrastructure (National Laboratory
+// of the Rockies) and its /api/alt-fuel-stations/v1.json path independently
+// mirrors the identical AFDC schema and station_locator_url with real data.
+// developer.nrel.gov itself does not resolve at all from this environment.
+const AFDC_API_BASE = 'https://developer.nlr.gov/api/alt-fuel-stations/v1.json';
 const SRC_DIR = path.dirname(fileURLToPath(import.meta.url));
 const SNAPSHOT_DIR = path.join(SRC_DIR, '..', '..', 'data');
 const SNAPSHOT_RAW = path.join(SNAPSHOT_DIR, 'afdc_snapshot.json');
@@ -49,17 +57,40 @@ function toPortCount(v) {
   return Number.isFinite(n) && n >= 0 ? Math.trunc(n) : null;
 }
 
+const US_ENVELOPE = { latMin: 15, latMax: 72, lngMin: -180, lngMax: -60 };
+
+function usableNativePoint(lat, lng) {
+  return Number.isFinite(lat) && Number.isFinite(lng)
+    && lat >= US_ENVELOPE.latMin && lat <= US_ENVELOPE.latMax
+    && lng >= US_ENVELOPE.lngMin && lng <= US_ENVELOPE.lngMax;
+}
+
 /**
  * AFDC record → afdc_stations parameter row (minus synced_at), or null when
- * the record lacks a usable id/coordinate pair or falls outside the US
- * envelope (CONUS + AK + HI; positive-longitude Aleutian outliers excluded).
+ * the record lacks a usable id AND has neither a usable native coordinate nor
+ * enough address to ever be geocoded. UOW-22 Task 22.2: dual-coordinate
+ * persistence — the raw AFDC point (afdc_latitude/afdc_longitude, verbatim)
+ * and the active render point (latitude/longitude) start out identical when
+ * the source record carries a valid point ('NATIVE_GPS' — the field-surveyed
+ * AFDC coordinate is the highest-precision source available). A record with
+ * no usable native point is still admitted when it has enough address to
+ * resolve later — it ingests with a NULL active pin ('MISSING') until
+ * backfillGeocodePrecision or the standalone script derives one.
  */
 export function mapAfdcRecord(rec) {
   const id = Number(rec?.id);
-  const lat = Number(rec?.latitude);
-  const lng = Number(rec?.longitude);
-  if (!Number.isInteger(id) || !Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-  if (lat < 15 || lat > 72 || lng < -180 || lng > -60) return null;
+  if (!Number.isInteger(id)) return null;
+
+  const rawLat = Number(rec?.latitude);
+  const rawLng = Number(rec?.longitude);
+  const hasNative = usableNativePoint(rawLat, rawLng);
+  const hasAddress = Boolean(rec?.city || rec?.state || rec?.zip);
+  if (!hasNative && !hasAddress) return null;
+
+  const afdcLat = hasNative ? rawLat : null;
+  const afdcLng = hasNative ? rawLng : null;
+  const afdcGeocodeStatus = hasNative ? 'PRESENT' : 'MISSING';
+
   return [
     id,
     String(rec.station_name ?? `AFDC Station ${id}`),
@@ -67,8 +98,11 @@ export function mapAfdcRecord(rec) {
     rec.city ?? null,
     rec.state ?? null,
     rec.zip != null ? String(rec.zip) : null,
-    lat,
-    lng,
+    hasNative ? rawLat : null, // active render latitude
+    hasNative ? rawLng : null, // active render longitude
+    afdcLat,
+    afdcLng,
+    afdcGeocodeStatus,
     rec.fuel_type_code ?? 'ELEC',
     rec.access_days_time ?? null,
     rec.ev_network ?? null,
@@ -76,6 +110,7 @@ export function mapAfdcRecord(rec) {
     toPortCount(rec.ev_dc_fast_num),
     toPortCount(rec.ev_level2_evse_num ?? rec.ev_level2_num),
     rec.updated_at ?? null,
+    hasNative ? 'NATIVE_GPS' : null,
   ];
 }
 
@@ -84,9 +119,10 @@ export function mapAfdcRecord(rec) {
 const UPSERT_SQL = `
   INSERT INTO afdc_stations (
     afdc_id, station_name, street_address, city, state, zip,
-    latitude, longitude, fuel_type_code, access_days_time, ev_network,
-    status_code, ev_dc_fast_num, ev_level2_num, updated_at, synced_at
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    latitude, longitude, afdc_latitude, afdc_longitude, afdc_geocode_status,
+    fuel_type_code, access_days_time, ev_network,
+    status_code, ev_dc_fast_num, ev_level2_num, updated_at, precision_score, synced_at
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(afdc_id) DO UPDATE SET
     station_name = excluded.station_name,
     street_address = excluded.street_address,
@@ -95,6 +131,9 @@ const UPSERT_SQL = `
     zip = excluded.zip,
     latitude = excluded.latitude,
     longitude = excluded.longitude,
+    afdc_latitude = excluded.afdc_latitude,
+    afdc_longitude = excluded.afdc_longitude,
+    afdc_geocode_status = excluded.afdc_geocode_status,
     fuel_type_code = excluded.fuel_type_code,
     access_days_time = excluded.access_days_time,
     ev_network = excluded.ev_network,
@@ -103,7 +142,9 @@ const UPSERT_SQL = `
     ev_level2_num = excluded.ev_level2_num,
     updated_at = excluded.updated_at,
     synced_at = excluded.synced_at,
-    precision_score = NULL
+    precision_score = excluded.precision_score,
+    geocoded_latitude = NULL,
+    geocoded_longitude = NULL
 `;
 
 /**
@@ -222,59 +263,13 @@ function openSnapshotStream({ file, gzip }) {
   return gzip ? raw.pipe(createGunzip()) : raw;
 }
 
-// --- Source tier 3: deterministic snapshot synthesis --------------------------
-
-// Metro anchors weighted by rough EV-infrastructure density; the remainder of
-// the registry scatters along the UOW-09 interstate corridor polylines so the
-// national plane reads organically at every zoom.
-const METROS = [
-  ['Los Angeles', 'CA', 34.05, -118.24, 9], ['San Francisco', 'CA', 37.77, -122.42, 6],
-  ['San Jose', 'CA', 37.34, -121.89, 4], ['San Diego', 'CA', 32.72, -117.16, 4],
-  ['Sacramento', 'CA', 38.58, -121.49, 3], ['Fresno', 'CA', 36.75, -119.77, 1.5],
-  ['Seattle', 'WA', 47.61, -122.33, 4], ['Spokane', 'WA', 47.66, -117.43, 1],
-  ['Portland', 'OR', 45.52, -122.68, 3], ['Boise', 'ID', 43.62, -116.2, 1],
-  ['Phoenix', 'AZ', 33.45, -112.07, 3], ['Tucson', 'AZ', 32.22, -110.97, 1],
-  ['Las Vegas', 'NV', 36.17, -115.14, 2], ['Salt Lake City', 'UT', 40.76, -111.89, 1.5],
-  ['Denver', 'CO', 39.74, -104.99, 3], ['Albuquerque', 'NM', 35.08, -106.65, 1],
-  ['Dallas', 'TX', 32.78, -96.8, 3], ['Houston', 'TX', 29.76, -95.37, 3],
-  ['Austin', 'TX', 30.27, -97.74, 2.5], ['San Antonio', 'TX', 29.42, -98.49, 1.5],
-  ['Oklahoma City', 'OK', 35.47, -97.52, 1], ['Kansas City', 'MO', 39.1, -94.58, 1.5],
-  ['Minneapolis', 'MN', 44.98, -93.27, 2.5], ['St. Louis', 'MO', 38.63, -90.2, 1.5],
-  ['Chicago', 'IL', 41.88, -87.63, 4], ['Milwaukee', 'WI', 43.04, -87.91, 1],
-  ['Madison', 'WI', 43.07, -89.4, 1], ['Des Moines', 'IA', 41.59, -93.62, 0.8],
-  ['Omaha', 'NE', 41.26, -95.93, 0.8], ['Detroit', 'MI', 42.33, -83.05, 2],
-  ['Indianapolis', 'IN', 39.77, -86.16, 1.5], ['Columbus', 'OH', 39.96, -83.0, 1.5],
-  ['Cleveland', 'OH', 41.5, -81.69, 1.2], ['Cincinnati', 'OH', 39.1, -84.51, 1.2],
-  ['Pittsburgh', 'PA', 40.44, -79.99, 1.5], ['Nashville', 'TN', 36.16, -86.78, 1.5],
-  ['Memphis', 'TN', 35.15, -90.05, 0.8], ['Louisville', 'KY', 38.25, -85.76, 0.8],
-  ['Atlanta', 'GA', 33.75, -84.39, 3], ['Charlotte', 'NC', 35.23, -80.84, 1.5],
-  ['Raleigh', 'NC', 35.78, -78.64, 1.5], ['Wilmington', 'NC', 34.22, -77.94, 0.7],
-  ['Richmond', 'VA', 37.54, -77.44, 1],
-  ['Washington', 'DC', 38.9, -77.04, 3], ['Baltimore', 'MD', 39.29, -76.61, 1.5],
-  ['Philadelphia', 'PA', 39.95, -75.17, 2.5], ['Newark', 'NJ', 40.74, -74.17, 1.5],
-  ['New York', 'NY', 40.71, -74.01, 5], ['Boston', 'MA', 42.36, -71.06, 3],
-  ['Providence', 'RI', 41.82, -71.41, 0.8], ['Hartford', 'CT', 41.77, -72.67, 0.8],
-  ['Albany', 'NY', 42.65, -73.75, 0.8], ['Buffalo', 'NY', 42.89, -78.88, 0.8],
-  ['Portland', 'ME', 43.66, -70.26, 0.6], ['Burlington', 'VT', 44.48, -73.21, 0.6],
-  ['Miami', 'FL', 25.77, -80.19, 2.5], ['Orlando', 'FL', 28.54, -81.38, 2],
-  ['Tampa', 'FL', 27.95, -82.46, 1.8], ['Jacksonville', 'FL', 30.33, -81.66, 1.2],
-  ['New Orleans', 'LA', 29.95, -90.07, 1], ['Birmingham', 'AL', 33.52, -86.8, 0.7],
-  ['Charleston', 'SC', 32.78, -79.93, 0.7],
-];
-const CORRIDOR_SHARE = 0.15; // slice of the target scattered along interstates
-
-const NETWORKS = [
-  ['ChargePoint Network', 30], ['Non-Networked', 20], ['Tesla', 12], ['Blink Network', 9],
-  ['EVgo Network', 8], ['Electrify America', 7], ['SHELL_RECHARGE', 5], ['Volta', 4],
-  ['EV Connect', 3], ['FLO', 2],
-];
-const VENUES = [
-  'City Hall', 'Public Library', 'Transit Center', 'Whole Foods Market', 'Parking Structure',
-  'Community College', 'Medical Center', 'Shopping Plaza', 'Hilton Garden Inn', 'Municipal Lot',
-];
-const ACCESS_HOURS = ['24 hours daily', 'Dawn to dusk', 'MON-FRI 7am-9pm', '6am-10pm daily'];
-const STREETS = ['Main St', 'Oak Ave', 'Center Dr', 'Market St', 'Industrial Pkwy', 'Harbor Blvd'];
-
+// --- Coastal geometry validation (UOW-14 regression guard) --------------------
+//
+// Retained independent of the synthetic seed generator it originally gated:
+// verifyRegistry() below still re-runs every ingested row (live or authentic
+// snapshot) through onLand() as a sanity check that no source data lands in
+// open water — a legitimate guard regardless of where the row came from.
+//
 // UOW-14 Task 14.4: generalized topological clipping. The 14.3 gate only
 // covered two metro anchors; the San Diego anchor and — critically — the I-5
 // corridor scatter (whose SD→LA chord interpolates straight across the
@@ -359,180 +354,6 @@ export function onLand(lat, lng) {
   return zoneViolation(lat, lng) === null;
 }
 
-// Deterministic landfall for a base point that is itself in the water (the
-// I-5 SD→LA and I-80 lake-crossing chord cases): project onto the violated
-// zone's shoreline and nudge landward, doubling the nudge depth until the
-// candidate clears every zone — a fixed depth can strand inside concave
-// corner wedges of the polyline. Gate zones fall back to the base point
-// (every corridor chord base inside a gate zone is verified on land).
-function snapLandward(lat, lng) {
-  const zone = zoneViolation(lat, lng);
-  if (!zone?.shore) return { lat, lng };
-  const seg = nearestShoreSegment(zone.shore, lat, lng);
-  const len = Math.hypot(seg.dLat, seg.dLng);
-  for (let depth = 0.03; depth <= 0.5; depth *= 2) {
-    const scale = (depth * zone.side) / len;
-    const cLat = seg.pLat + seg.dLng * scale;
-    const cLng = seg.pLng - seg.dLat * scale;
-    if (onLand(cLat, cLng)) return { lat: cLat, lng: cLng };
-  }
-  return { lat: seg.pLat, lng: seg.pLng };
-}
-
-// Rejection-sample the scatter: redraw until the candidate clears every
-// coastal zone (same deterministic stream, so the seed stays reproducible);
-// after 40 rejected draws, snap deterministically to the nearest landward
-// point.
-function jitter(rand, lat, lng, sigmaLat, sigmaLng) {
-  for (let attempt = 0; attempt < 40; attempt += 1) {
-    const cLat = lat + gauss(rand) * sigmaLat;
-    const cLng = lng + gauss(rand) * sigmaLng;
-    if (onLand(cLat, cLng)) return { lat: cLat, lng: cLng };
-  }
-  return snapLandward(lat, lng);
-}
-
-// Same deterministic PRNG family as the corridor/tariff seeders.
-function seededRng(seed) {
-  let h = (seed >>> 0) || 1;
-  return () => {
-    h = Math.imul(h ^ (h >>> 15), h | 1);
-    h ^= h + Math.imul(h ^ (h >>> 7), h | 61);
-    return ((h ^ (h >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-function gauss(rand) {
-  return Math.sqrt(-2 * Math.log(Math.max(rand(), 1e-9))) * Math.cos(2 * Math.PI * rand());
-}
-
-function weightedPick(rand, table) {
-  const total = table.reduce((a, [, w]) => a + w, 0);
-  let roll = rand() * total;
-  for (const [value, w] of table) {
-    roll -= w;
-    if (roll <= 0) return value;
-  }
-  return table[table.length - 1][0];
-}
-
-function buildSeedRecord(afdcId, anchor, rand) {
-  const isDcFast = rand() < 0.2;
-  const statusRoll = rand();
-  const updated = new Date(Date.UTC(2023, 0, 1) + Math.floor(rand() * 3.4 * 365 * 86400000));
-  return {
-    id: afdcId,
-    station_name: `${VENUES[Math.floor(rand() * VENUES.length)]} - ${anchor.city ?? anchor.state} #${1 + Math.floor(rand() * 40)}`,
-    street_address: `${100 + Math.floor(rand() * 9800)} ${STREETS[Math.floor(rand() * STREETS.length)]}`,
-    city: anchor.city,
-    state: anchor.state,
-    zip: String(10000 + Math.floor(rand() * 89999)),
-    latitude: Math.round(anchor.lat * 1e6) / 1e6,
-    longitude: Math.round(anchor.lng * 1e6) / 1e6,
-    fuel_type_code: 'ELEC',
-    access_days_time: ACCESS_HOURS[Math.floor(rand() * ACCESS_HOURS.length)],
-    ev_network: weightedPick(rand, NETWORKS),
-    status_code: statusRoll < 0.92 ? 'E' : statusRoll < 0.97 ? 'P' : 'T',
-    ev_dc_fast_num: isDcFast ? 2 + Math.floor(rand() * 14) : null,
-    ev_level2_evse_num: isDcFast ? (rand() < 0.4 ? 1 + Math.floor(rand() * 3) : null) : 1 + Math.floor(rand() * 11),
-    ev_connector_types: isDcFast ? ['CHADEMO', 'J1772COMBO'] : ['J1772'],
-    updated_at: updated.toISOString().slice(0, 10),
-  };
-}
-
-/**
- * Deterministic generator yielding `target` AFDC-shaped records one at a
- * time. UOW-21: the former static GROUND_TRUTH_DICTIONARY special-case
- * (five hardcoded Leland-sector anchors) is retired — every station,
- * Leland included, is now a plain scatter-generated (or live-AFDC) record
- * whose coordinate precision comes from the ingest-time geocoding-cleanse
- * pipeline (backfillGeocodePrecision, below) rather than a hand-surveyed
- * constant.
- */
-function* generateSeedRecords(target) {
-  const scattered = target;
-  const corridorCount = Math.round(scattered * CORRIDOR_SHARE);
-  const metroCount = scattered - corridorCount;
-  const metroWeightTotal = METROS.reduce((a, m) => a + m[4], 0);
-  let afdcId = 200001;
-
-  let emitted = 0;
-  for (const [mi, [city, state, lat, lng, weight]] of METROS.entries()) {
-    const allocation = mi === METROS.length - 1
-      ? metroCount - emitted // last metro absorbs rounding remainder
-      : Math.round((weight / metroWeightTotal) * metroCount);
-    const sigma = 0.06 + Math.sqrt(weight) * 0.05;
-    for (let i = 0; i < allocation; i += 1) {
-      const rand = seededRng(afdcId);
-      yield buildSeedRecord(afdcId, {
-        city, state,
-        ...jitter(rand, lat, lng, sigma, sigma * 1.2),
-      }, rand);
-      afdcId += 1;
-      emitted += 1;
-    }
-  }
-
-  const corridorLens = CORRIDORS.map((c) => c.waypoints.length - 1);
-  const lenTotal = corridorLens.reduce((a, b) => a + b, 0);
-  let corridorEmitted = 0;
-  for (const [ci, corridor] of CORRIDORS.entries()) {
-    const allocation = ci === CORRIDORS.length - 1
-      ? corridorCount - corridorEmitted
-      : Math.round((corridorLens[ci] / lenTotal) * corridorCount);
-    const segments = corridor.waypoints.length - 1;
-    for (let i = 0; i < allocation; i += 1) {
-      const rand = seededRng(afdcId);
-      const t = segments * (i / allocation);
-      const seg = Math.min(Math.floor(t), segments - 1);
-      const frac = t - seg;
-      const a = corridor.waypoints[seg];
-      const b = corridor.waypoints[seg + 1];
-      // Corridor chords can cross open water outright (I-5's SD→LA leg cuts
-      // across the Pacific bight), so the base interpolation itself rides
-      // through the same land gate as the jitter.
-      yield buildSeedRecord(afdcId, {
-        city: null,
-        state: (frac < 0.5 ? a : b).state,
-        ...jitter(rand, a.lat + (b.lat - a.lat) * frac, a.lng + (b.lng - a.lng) * frac, 0.08, 0.08),
-      }, rand);
-      afdcId += 1;
-      corridorEmitted += 1;
-    }
-  }
-}
-
-async function writeWithBackpressure(stream, text) {
-  if (!stream.write(text)) await once(stream, 'drain');
-}
-
-/**
- * Streams a deterministic AFDC-shaped registry snapshot to
- * backend/data/afdc_snapshot.json.gz — record-at-a-time through gzip with
- * drain backpressure, so synthesis is as constant-memory as ingestion.
- */
-export async function synthesizeSnapshot(target = AFDC_TARGET) {
-  mkdirSync(SNAPSHOT_DIR, { recursive: true });
-  const file = createWriteStream(SNAPSHOT_GZ);
-  const gzip = createGzip({ level: 6 });
-  gzip.pipe(file);
-
-  await writeWithBackpressure(
-    gzip,
-    `{"station_locator_url":"https://afdc.energy.gov/stations/","total_results":${target},` +
-    '"station_counts":{"fuels":{"ELEC":{"total":' + target + '}}},"fuel_stations":['
-  );
-  let first = true;
-  for (const record of generateSeedRecords(target)) {
-    await writeWithBackpressure(gzip, (first ? '' : ',') + JSON.stringify(record));
-    first = false;
-  }
-  await writeWithBackpressure(gzip, ']}');
-  gzip.end();
-  await finished(file);
-  return SNAPSHOT_GZ;
-}
-
 // --- Orchestration ------------------------------------------------------------
 
 export function countAfdcStations() {
@@ -552,22 +373,28 @@ function verifyRegistry(rtreeActive) {
   // viewport (PO reference ~34.24, -78.01) must never report empty again —
   // real AFDC data has stations there, and the seed now anchors the metro.
   const coastalBox = queryStationsInBounds({ minLat: 34.0, maxLat: 34.5, minLng: -78.3, maxLng: -77.7 });
-  // UOW-14 Task 14.4: ocean-leak gate — every ingested row re-runs through
-  // the exact onLand() zone geometry the generator used, so verification can
-  // never disagree with generation (SQL chord approximations of the shoreline
-  // polylines produced false positives on legitimate near-coast land rows).
+  // UOW-14 Task 14.4 (re-scoped UOW-22): this hand-drawn shoreline geometry
+  // was built to gate a deterministic synthetic generator's own jitter draws.
+  // Now that the registry only ever holds authentic AFDC records, a nonzero
+  // count here is expected and NOT a defect — real stations legitimately sit
+  // on piers, harbors, barrier islands, and other coastline features these
+  // simplified polylines don't model precisely. Reported as a diagnostic
+  // only; no longer gates `verified` below.
   let oceanLeaks = 0;
   for (const row of database
-    .prepare('SELECT latitude AS lat, longitude AS lng FROM afdc_stations')
+    .prepare('SELECT latitude AS lat, longitude AS lng FROM afdc_stations WHERE latitude IS NOT NULL AND longitude IS NOT NULL')
     .iterate()) {
     if (!onLand(row.lat, row.lng)) oceanLeaks += 1;
   }
-  // UOW-21: precision coverage — how many rows the geocoding-cleanse
-  // pipeline has already resolved to a real rooftop coordinate. Reported,
-  // not gating: this climbs progressively via backfillGeocodePrecision()
-  // rather than completing during any single ingest pass.
+  // UOW-22: precision coverage — how many rows carry a resolved active pin at
+  // all (NATIVE_GPS from the AFDC source, or a geocode-cleanse hit) versus
+  // still sitting unpinned pending backfillGeocodePrecision(). Reported, not
+  // gating: coverage climbs progressively rather than completing in one pass.
   const { n: precisionCoverage } = database
-    .prepare("SELECT COUNT(*) AS n FROM afdc_stations WHERE precision_score = 'ROOFTOP_INTERPOLATED'")
+    .prepare("SELECT COUNT(*) AS n FROM afdc_stations WHERE precision_score IS NOT NULL")
+    .get();
+  const { n: nativeGpsCoverage } = database
+    .prepare("SELECT COUNT(*) AS n FROM afdc_stations WHERE precision_score = 'NATIVE_GPS'")
     .get();
   return {
     stations,
@@ -576,8 +403,9 @@ function verifyRegistry(rtreeActive) {
     coastalSpotCheck: coastalBox.length,
     oceanLeaks,
     precisionCoverage,
+    nativeGpsCoverage,
     verified: stations > 0 && rtreeRows === stations && laBox.length > 0
-      && coastalBox.length > 0 && oceanLeaks === 0,
+      && coastalBox.length > 0,
   };
 }
 
@@ -692,10 +520,12 @@ export function locateRegistry(query) {
 }
 
 /**
- * Runs the tiered pipeline: live AFDC fetch → local snapshot → synthesized
- * seed. Returns ingest stats merged with post-ingest verification.
+ * UOW-22 Task 22.1: runs the (now two-tier) pipeline: live AFDC fetch → local
+ * authentic snapshot. No synthetic fallback — if both tiers fail, this
+ * returns a zero-station result rather than fabricating data. Returns ingest
+ * stats merged with post-ingest verification.
  */
-export async function ingestAfdcRegistry({ target = AFDC_TARGET } = {}) {
+export async function ingestAfdcRegistry() {
   const { rtree, wiped } = ensureAfdcSchema();
   const apiKey = process.env.NREL_API_KEY ?? 'DEMO_KEY';
   const startedAt = Date.now();
@@ -704,8 +534,8 @@ export async function ingestAfdcRegistry({ target = AFDC_TARGET } = {}) {
   // UOW-15 Task 15.1: the AFDC_SEED_VERSION destructive gate dropped the
   // registry tables, so the cached snapshot on disk holds the SAME stale
   // geometry the wipe exists to shred — purge it too, or the tier-2 fallback
-  // would faithfully re-ingest every pre-v6 ocean/lake row and boot without
-  // the current schema (precision_score included).
+  // would faithfully re-ingest every pre-v14 row and boot without the
+  // current schema (dual-coordinate columns included).
   if (wiped) {
     for (const stale of [SNAPSHOT_RAW, SNAPSHOT_GZ]) {
       if (existsSync(stale)) {
@@ -719,9 +549,9 @@ export async function ingestAfdcRegistry({ target = AFDC_TARGET } = {}) {
     console.warn('AFDC ingestion: no NREL_API_KEY set — using DEMO_KEY (throttling expected, fallback armed)');
   }
   try {
-    stats = await ingestByteStream(await openLiveStream(apiKey), 'nrel-live');
+    stats = await ingestByteStream(await openLiveStream(apiKey), 'afdc-live');
   } catch (err) {
-    console.warn(`AFDC ingestion: live NREL fetch failed (${err.message}); trying local snapshot`);
+    console.warn(`AFDC ingestion: live AFDC fetch failed (${err.message}); trying local authentic snapshot`);
   }
 
   if (!stats || stats.ingested === 0) {
@@ -730,15 +560,14 @@ export async function ingestAfdcRegistry({ target = AFDC_TARGET } = {}) {
       try {
         stats = await ingestByteStream(openSnapshotStream(snapshot), 'local-snapshot');
       } catch (err) {
-        console.warn(`AFDC ingestion: snapshot ${path.basename(snapshot.file)} failed (${err.message}); synthesizing seed`);
+        console.warn(`AFDC ingestion: snapshot ${path.basename(snapshot.file)} failed (${err.message})`);
       }
     }
   }
 
   if (!stats || stats.ingested === 0) {
-    console.log(`AFDC ingestion: synthesizing deterministic ${target}-station seed snapshot…`);
-    await synthesizeSnapshot(target);
-    stats = await ingestByteStream(openSnapshotStream(findSnapshot()), 'synthesized-seed');
+    console.warn('AFDC ingestion: no live source and no authentic local snapshot available — registry stays empty (no synthetic fallback)');
+    stats = { source: 'none', parsed: 0, skipped: 0, ingested: 0, batches: 0, peakHeapMB: 0 };
   }
 
   return { ...stats, ...verifyRegistry(rtree), durationMs: Date.now() - startedAt };
@@ -764,38 +593,55 @@ export async function initAfdcIngestion() {
 const GEOCODE_BOOT_BATCH = Number(process.env.GEOCODE_BOOT_BATCH) || 25;
 
 /**
- * UOW-21: bounded, resumable geocoding-cleanse pass — the ingest pipeline's
- * inline integration of the high-precision geocoding engine. Shares
- * geocodeEngine.js with the standalone backfill script
+ * UOW-21/22: bounded, resumable geocoding-cleanse pass — the ingest
+ * pipeline's inline integration of the high-precision geocoding engine.
+ * Shares geocodeEngine.js with the standalone backfill script
  * (backend/scripts/geocodeStations.js), so a station's coordinate always
  * resolves through the exact same tiered Census -> Nominatim lookup no
  * matter which caller triggered it — one uniform code path, no per-station
  * special-casing.
  *
+ * UOW-22 Task 22.2 (dual-coordinate persistence): targets any row that has
+ * never been geocode-attempted (geocoded_latitude IS NULL), including rows
+ * that already have a NATIVE_GPS active pin — the geocode result is stored
+ * independently (geocoded_latitude/geocoded_longitude) as a cross-check
+ * rather than overwriting a source coordinate that outranks it. Only rows
+ * with no native point (afdc_geocode_status = 'MISSING') get the geocode
+ * result promoted into the active latitude/longitude/precision_score.
+ *
  * Bounded to `limit` rows per call rather than run fleet-wide inline: the
- * shared 1 req/sec throttle would take ~21 hours across the full 75k-row
- * registry, which cannot block server startup. This picks up the oldest
- * un-geocoded rows (afdc_id order) a small slice at a time on every boot, so
- * coverage climbs progressively without ever stalling the app. For a larger
- * or specifically-scoped batch (e.g. one ZIP code, or an overnight full-fleet
- * run), invoke backend/scripts/geocodeStations.js directly.
+ * shared 1 req/sec throttle would take hours across the full registry, which
+ * cannot block server startup. This picks up the oldest un-geocoded rows
+ * (afdc_id order) a small slice at a time on every boot, so coverage climbs
+ * progressively without ever stalling the app. For a larger or specifically-
+ * scoped batch (e.g. one ZIP code, or an overnight full-fleet run), invoke
+ * backend/scripts/geocodeStations.js directly.
  */
 export async function backfillGeocodePrecision({ limit = GEOCODE_BOOT_BATCH } = {}) {
   ensureAfdcSchema();
   const database = getDb();
   const targets = database
-    .prepare('SELECT * FROM afdc_stations WHERE precision_score IS NULL ORDER BY afdc_id LIMIT ?')
+    .prepare('SELECT * FROM afdc_stations WHERE geocoded_latitude IS NULL ORDER BY afdc_id LIMIT ?')
     .all(limit);
   if (targets.length === 0) return { attempted: 0, geocoded: 0 };
 
-  const update = database.prepare(
-    'UPDATE afdc_stations SET latitude = ?, longitude = ?, precision_score = ? WHERE afdc_id = ?'
+  const storeGeocodedOnly = database.prepare(
+    'UPDATE afdc_stations SET geocoded_latitude = ?, geocoded_longitude = ? WHERE afdc_id = ?'
+  );
+  const promoteToActive = database.prepare(
+    `UPDATE afdc_stations
+     SET geocoded_latitude = ?, geocoded_longitude = ?, latitude = ?, longitude = ?, precision_score = ?
+     WHERE afdc_id = ?`
   );
   let geocoded = 0;
   for (const station of targets) {
     const result = await geocodeStationAddress(station);
     if (!result) continue;
-    update.run(result.lat, result.lng, result.precisionScore, station.afdc_id);
+    if (station.afdc_geocode_status === 'PRESENT') {
+      storeGeocodedOnly.run(result.lat, result.lng, station.afdc_id);
+    } else {
+      promoteToActive.run(result.lat, result.lng, result.lat, result.lng, result.precisionScore, station.afdc_id);
+    }
     geocoded += 1;
   }
   return { attempted: targets.length, geocoded };
@@ -811,7 +657,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   console.log(`  registry rows:     ${result.stations} | rtree in sync: ${result.rtreeInSync}`);
   console.log(`  LA bbox spot-check: ${result.spatialSpotCheck} stations`);
   console.log(`  coastal spot-check: ${result.coastalSpotCheck} stations | ocean leaks: ${result.oceanLeaks}`);
-  console.log(`  precision coverage: ${result.precisionCoverage} / ${result.stations} stations ROOFTOP_INTERPOLATED`);
+  console.log(`  precision coverage: ${result.precisionCoverage} / ${result.stations} stations pinned (${result.nativeGpsCoverage} NATIVE_GPS)`);
   console.log(`  peak heap:         ${result.peakHeapMB} MB | duration: ${result.durationMs} ms`);
   console.log(`  VERIFIED: ${result.verified}`);
 }

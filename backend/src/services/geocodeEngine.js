@@ -28,6 +28,17 @@ export function buildAddress(station) {
     .join(', ');
 }
 
+/**
+ * UOW-22: last-resort fallback query when the full address has no street
+ * component (or the full-address lookup found nothing) — zip + state only,
+ * which geocodes to a ZIP Code Tabulation Area centroid rather than a real
+ * point. Deliberately coarser than the rooftop/street tier, so callers tag
+ * a hit from this query 'ZIP_CENTROID' rather than 'ROOFTOP_INTERPOLATED'.
+ */
+function buildZipCentroidQuery(station) {
+  return [station.zip, station.state].filter((part) => part != null && String(part).trim() !== '').join(', ');
+}
+
 async function geocodeCensus(address) {
   const params = new URLSearchParams({ address, benchmark: 'Public_AR_Current', format: 'json' });
   const res = await fetch(`${CENSUS_URL}?${params}`, {
@@ -63,31 +74,61 @@ async function geocodeNominatim(address) {
 }
 
 /**
- * Cleanses a station's address and resolves a rooftop/street coordinate
- * through the tiered lookup. Returns null (caller keeps the station's
- * existing coordinate) when the address is unusable or both tiers fail —
- * e.g. a synthesized-seed station's fabricated street address, or a live
- * network outage in this dev sandbox (both tiers are expected to succeed on
- * Railway's network).
+ * Cleanses a station's address and resolves a coordinate through the tiered
+ * lookup. Returns null (caller keeps the station's existing coordinate, if
+ * any) when there's no usable address/zip at all or every tier fails — e.g.
+ * a live network outage in this dev sandbox (all tiers are expected to
+ * succeed on Railway's network).
+ *
+ * UOW-22: three precision tiers, first hit wins —
+ *   1. Full street address, Census then Nominatim → 'ROOFTOP_INTERPOLATED'
+ *      (only when the station actually has a street_address component; a
+ *      "full address" query with no street is really just city/state/zip
+ *      and gets tagged at ZIP_CENTROID quality instead — no overclaiming).
+ *   2. ZIP + state only, Census then Nominatim → 'ZIP_CENTROID' — the
+ *      last-resort fallback when the rooftop tier is unusable or fails.
  */
 export async function geocodeStationAddress(station) {
   const address = buildAddress(station);
-  if (!address) return null;
+  const hasStreet = station?.street_address != null && String(station.street_address).trim() !== '';
 
-  await throttle();
-  try {
-    const hit = await geocodeCensus(address);
-    if (hit) return { ...hit, precisionScore: 'ROOFTOP_INTERPOLATED', source: 'census', address };
-  } catch (err) {
-    console.warn(`geocodeEngine: Census tier failed for "${address}" (${err.message})`);
+  if (address) {
+    const rooftopScore = hasStreet ? 'ROOFTOP_INTERPOLATED' : 'ZIP_CENTROID';
+
+    await throttle();
+    try {
+      const hit = await geocodeCensus(address);
+      if (hit) return { ...hit, precisionScore: rooftopScore, source: 'census', address };
+    } catch (err) {
+      console.warn(`geocodeEngine: Census tier failed for "${address}" (${err.message})`);
+    }
+
+    await throttle();
+    try {
+      const hit = await geocodeNominatim(address);
+      if (hit) return { ...hit, precisionScore: rooftopScore, source: 'nominatim', address };
+    } catch (err) {
+      console.warn(`geocodeEngine: Nominatim tier failed for "${address}" (${err.message})`);
+    }
   }
 
-  await throttle();
-  try {
-    const hit = await geocodeNominatim(address);
-    if (hit) return { ...hit, precisionScore: 'ROOFTOP_INTERPOLATED', source: 'nominatim', address };
-  } catch (err) {
-    console.warn(`geocodeEngine: Nominatim tier failed for "${address}" (${err.message})`);
+  const zipQuery = buildZipCentroidQuery(station);
+  if (zipQuery && zipQuery !== address) {
+    await throttle();
+    try {
+      const hit = await geocodeCensus(zipQuery);
+      if (hit) return { ...hit, precisionScore: 'ZIP_CENTROID', source: 'census', address: zipQuery };
+    } catch (err) {
+      console.warn(`geocodeEngine: Census zip-centroid tier failed for "${zipQuery}" (${err.message})`);
+    }
+
+    await throttle();
+    try {
+      const hit = await geocodeNominatim(zipQuery);
+      if (hit) return { ...hit, precisionScore: 'ZIP_CENTROID', source: 'nominatim', address: zipQuery };
+    } catch (err) {
+      console.warn(`geocodeEngine: Nominatim zip-centroid tier failed for "${zipQuery}" (${err.message})`);
+    }
   }
 
   return null;

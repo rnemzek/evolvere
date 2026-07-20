@@ -360,10 +360,12 @@ export function getSpatialClusters({ minLat, maxLat, minLng, maxLng, zoom }) {
         longitude: r.longitude,
         isPlanned: r.status_code === 'P',
         activeGridSag: r.status_code != null && r.status_code !== 'E' && r.status_code !== 'P',
-        // UOW-21: high-precision beacons now render off the geocoding-cleanse
-        // pipeline's precision_score rather than a hardcoded id set — any
-        // station in the fleet can earn the neon treatment, not just five.
-        isHighPrecision: r.precision_score === 'ROOFTOP_INTERPOLATED',
+        // UOW-21/22: high-precision beacons render off the precision_score
+        // tier — NATIVE_GPS (the AFDC source's own field-surveyed point) and
+        // ROOFTOP_INTERPOLATED (a full-address geocode hit) both earn the
+        // neon treatment; ZIP_CENTROID is deliberately excluded — it's a
+        // coarse area-level fallback, not a real point worth highlighting.
+        isHighPrecision: r.precision_score === 'NATIVE_GPS' || r.precision_score === 'ROOFTOP_INTERPOLATED',
       })),
     };
   }
@@ -371,12 +373,11 @@ export function getSpatialClusters({ minLat, maxLat, minLng, maxLng, zoom }) {
   // Grid buckets sized off the slippy-tile pyramid: each tile axis splits into
   // CELLS_PER_TILE_AXIS cells, so cluster granularity tracks the zoom level.
   const cellDeg = 360 / (2 ** zoom * CELLS_PER_TILE_AXIS);
-  // UOW-21: clusters holding at least one geocoding-cleanse-verified station
-  // (precision_score = 'ROOFTOP_INTERPOLATED') get the neon treatment so
-  // high-precision coverage stays visible even when panned out — the same
-  // visual signal as before, now driven by real geocoded coverage instead of
-  // a five-station hardcoded set.
-  const HIGH_PRECISION = "CASE WHEN s.precision_score = 'ROOFTOP_INTERPOLATED' THEN 1 ELSE 0 END";
+  // UOW-21/22: clusters holding at least one high-precision station
+  // (NATIVE_GPS source point or a full ROOFTOP_INTERPOLATED geocode hit — not
+  // the coarser ZIP_CENTROID fallback) get the neon treatment so precision
+  // coverage stays visible even when panned out.
+  const HIGH_PRECISION = "CASE WHEN s.precision_score IN ('NATIVE_GPS', 'ROOFTOP_INTERPOLATED') THEN 1 ELSE 0 END";
   const CORRECTED_LAT = 'COALESCE(c.corrected_lat, s.latitude)';
   const CORRECTED_LNG = 'COALESCE(c.corrected_lng, s.longitude)';
   const rows = database

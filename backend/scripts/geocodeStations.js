@@ -1,12 +1,19 @@
-// UOW-21 Task 21.1: standalone high-precision batch geocoding backfill.
+// UOW-21/22: standalone high-precision batch geocoding backfill.
 //
-// Targets stations missing precision_score (or matching --zip/--state, for a
-// scoped pass — e.g. the initial Task 21.2 run against ZIP 28451), cleanses
-// each address, resolves a rooftop/street coordinate through the tiered
-// Census -> Nominatim engine at 1 req/sec, and writes the result straight
-// into afdc_stations. Shares geocodeEngine.js with the ingest pipeline's own
-// inline backfillGeocodePrecision() step, so a station's coordinate always
-// comes from the exact same lookup regardless of which path resolved it.
+// Targets stations never geocode-attempted (geocoded_latitude IS NULL), or
+// matching --zip/--state for a scoped pass, cleanses each address, resolves
+// a coordinate through the tiered Census -> Nominatim engine at 1 req/sec,
+// and writes it into afdc_stations. Shares geocodeEngine.js with the ingest
+// pipeline's own inline backfillGeocodePrecision() step, so a station's
+// coordinate always comes from the exact same lookup regardless of which
+// path resolved it.
+//
+// UOW-22 Task 22.2 (dual-coordinate persistence): the geocode result always
+// lands in geocoded_latitude/geocoded_longitude. It's only promoted into the
+// active latitude/longitude/precision_score when the station has no native
+// AFDC point (afdc_geocode_status = 'MISSING') — a station with a native
+// point keeps that as its active pin, and the geocode result sits alongside
+// it purely as an independent cross-check value.
 //
 // Usage:
 //   node backend/scripts/geocodeStations.js [--zip=28451] [--state=NC] [--limit=50]
@@ -31,7 +38,7 @@ async function main() {
   ensureAfdcSchema();
   const database = getDb();
 
-  const clauses = ["(precision_score IS NULL OR precision_score != 'ROOFTOP_INTERPOLATED')"];
+  const clauses = ['geocoded_latitude IS NULL'];
   const params = [];
   if (zip) {
     clauses.push('zip = ?');
@@ -51,8 +58,13 @@ async function main() {
     `${zip ? ` (zip=${zip})` : ''}${state ? ` (state=${state})` : ''}${limit ? ` (limit=${limit})` : ''}`
   );
 
-  const update = database.prepare(
-    'UPDATE afdc_stations SET latitude = ?, longitude = ?, precision_score = ? WHERE afdc_id = ?'
+  const storeGeocodedOnly = database.prepare(
+    'UPDATE afdc_stations SET geocoded_latitude = ?, geocoded_longitude = ? WHERE afdc_id = ?'
+  );
+  const promoteToActive = database.prepare(
+    `UPDATE afdc_stations
+     SET geocoded_latitude = ?, geocoded_longitude = ?, latitude = ?, longitude = ?, precision_score = ?
+     WHERE afdc_id = ?`
   );
 
   let geocoded = 0;
@@ -64,13 +76,17 @@ async function main() {
       console.log(`  [skip] AFDC-${station.afdc_id} "${station.station_name}" — no geocoder match for "${station.street_address ?? ''}, ${station.city ?? ''}, ${station.state ?? ''} ${station.zip ?? ''}"`);
       continue;
     }
-    const before = { lat: station.latitude, lng: station.longitude };
-    update.run(result.lat, result.lng, result.precisionScore, station.afdc_id);
+    const hasNative = station.afdc_geocode_status === 'PRESENT';
+    if (hasNative) {
+      storeGeocodedOnly.run(result.lat, result.lng, station.afdc_id);
+    } else {
+      promoteToActive.run(result.lat, result.lng, result.lat, result.lng, result.precisionScore, station.afdc_id);
+    }
     geocoded += 1;
     console.log(
       `  [ok]   AFDC-${station.afdc_id} "${station.station_name}" — ` +
-      `${before.lat.toFixed(6)}, ${before.lng.toFixed(6)} -> ${result.lat.toFixed(6)}, ${result.lng.toFixed(6)} ` +
-      `(${result.source}, ${result.precisionScore})`
+      `geocoded ${result.lat.toFixed(6)}, ${result.lng.toFixed(6)} (${result.source}, ${result.precisionScore})` +
+      `${hasNative ? ' [stored as cross-check; native AFDC point stays active]' : ' [promoted to active pin]'}`
     );
   }
 
