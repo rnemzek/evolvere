@@ -144,9 +144,16 @@ function App() {
     <div className="relative w-screen h-screen overflow-hidden bg-slate-950 text-slate-100 flex flex-col">
       <header className="z-[1000] w-full max-w-full left-0 right-0 box-border shrink-0 overflow-x-hidden flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-slate-800 bg-slate-900/85 backdrop-blur">
         <div className="min-w-0">
-          <h1 className="text-sm font-bold tracking-widest text-cyan-400 truncate">
-            Nemzilla evolvère GRID
-          </h1>
+          <div className="flex items-center gap-2">
+            <img
+              src="/app-icon.svg"
+              alt=""
+              className="h-5 w-5 shrink-0 sm:h-7 sm:w-7"
+            />
+            <h1 className="text-sm font-bold tracking-widest text-cyan-400 truncate">
+              GridZilla ēvolvere
+            </h1>
+          </div>
           <p className="text-xs text-slate-400 truncate">
             {registryProfile
               ? `${registryProfile.stations.toLocaleString()} stations · ${registryProfile.coverage} · ${registryProfile.states} states · live`

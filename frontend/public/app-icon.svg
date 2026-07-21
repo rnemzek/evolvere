@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <!-- Background: Bold Vivid Red -->
+  <rect width="512" height="512" fill="#D31212" rx="64"/>
+
+  <!-- Outer Imperfect Brush Stroke Circle -->
+  <path d="M 230 45 
+           C 340 38, 450 110, 462 230 
+           C 475 350, 390 460, 260 468 
+           C 130 475, 42 385, 48 250 
+           C 52 130, 140 52, 250 48 
+           C 330 45, 430 95, 448 180" 
+        fill="none" 
+        stroke="#0A0A0A" 
+        stroke-width="28" 
+        stroke-linecap="round" 
+        stroke-linejoin="round"/>
+
+  <!-- Inner Brush Details (Simulating the overlapping hand-drawn tail) -->
+  <path d="M 435 140 C 455 190, 452 240, 440 280" 
+        fill="none" 
+        stroke="#0A0A0A" 
+        stroke-width="16" 
+        stroke-linecap="round"/>
+
+  <!-- G Letter (Hand-drawn, heavy stroke aesthetic) -->
+  <path d="M 245 142 
+           C 200 120, 125 145, 120 205 
+           C 112 280, 185 298, 240 275 
+           L 240 235 
+           L 190 235" 
+        fill="none" 
+        stroke="#FFE800" 
+        stroke-width="36" 
+        stroke-linecap="round" 
+        stroke-linejoin="round"/>
+
+  <!-- Z Letter (Slanted, bold, heavy brush weight) -->
+  <path d="M 220 310 
+           L 380 310 
+           L 210 425 
+           L 385 425" 
+        fill="none" 
+        stroke="#FFE800" 
+        stroke-width="38" 
+        stroke-linecap="round" 
+        stroke-linejoin="round"/>
+</svg>
