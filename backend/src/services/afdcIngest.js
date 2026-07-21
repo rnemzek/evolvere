@@ -57,6 +57,38 @@ function toPortCount(v) {
   return Number.isFinite(n) && n >= 0 ? Math.trunc(n) : null;
 }
 
+/**
+ * UOW-22.3: `ev_connector_types` (e.g. ["TESLA"], ["CHADEMO","J1772COMBO"])
+ * persists as a JSON-encoded array so the station card can list real
+ * connector kinds instead of just a bare port count.
+ */
+function extractConnectorTypes(rec) {
+  const types = Array.isArray(rec?.ev_connector_types) ? rec.ev_connector_types : null;
+  if (!types || types.length === 0) return null;
+  return JSON.stringify(types.filter((t) => typeof t === 'string' && t.trim() !== ''));
+}
+
+/**
+ * UOW-22.3: `ev_charging_units` carries a per-unit connector/power_kw
+ * breakdown (each unit's `connectors` map has a `power_kw` per connector
+ * type). The station card wants one headline number, so this takes the
+ * highest power_kw found across every unit/connector on the station.
+ */
+function extractMaxPowerKw(rec) {
+  const units = Array.isArray(rec?.ev_charging_units) ? rec.ev_charging_units : null;
+  if (!units) return null;
+  let max = null;
+  for (const unit of units) {
+    const connectors = unit?.connectors;
+    if (!connectors || typeof connectors !== 'object') continue;
+    for (const info of Object.values(connectors)) {
+      const kw = Number(info?.power_kw);
+      if (Number.isFinite(kw) && kw > 0 && (max === null || kw > max)) max = kw;
+    }
+  }
+  return max;
+}
+
 const US_ENVELOPE = { latMin: 15, latMax: 72, lngMin: -180, lngMax: -60 };
 
 function usableNativePoint(lat, lng) {
@@ -109,6 +141,8 @@ export function mapAfdcRecord(rec) {
     rec.status_code ?? null,
     toPortCount(rec.ev_dc_fast_num),
     toPortCount(rec.ev_level2_evse_num ?? rec.ev_level2_num),
+    extractConnectorTypes(rec),
+    extractMaxPowerKw(rec),
     rec.updated_at ?? null,
     hasNative ? 'NATIVE_GPS' : null,
   ];
@@ -121,8 +155,9 @@ const UPSERT_SQL = `
     afdc_id, station_name, street_address, city, state, zip,
     latitude, longitude, afdc_latitude, afdc_longitude, afdc_geocode_status,
     fuel_type_code, access_days_time, ev_network,
-    status_code, ev_dc_fast_num, ev_level2_num, updated_at, precision_score, synced_at
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    status_code, ev_dc_fast_num, ev_level2_num, ev_connector_types, ev_max_power_kw,
+    updated_at, precision_score, synced_at
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(afdc_id) DO UPDATE SET
     station_name = excluded.station_name,
     street_address = excluded.street_address,
@@ -140,6 +175,8 @@ const UPSERT_SQL = `
     status_code = excluded.status_code,
     ev_dc_fast_num = excluded.ev_dc_fast_num,
     ev_level2_num = excluded.ev_level2_num,
+    ev_connector_types = excluded.ev_connector_types,
+    ev_max_power_kw = excluded.ev_max_power_kw,
     updated_at = excluded.updated_at,
     synced_at = excluded.synced_at,
     precision_score = excluded.precision_score,

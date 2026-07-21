@@ -79,7 +79,14 @@ let migrated = null;
 // preferred whenever present, since it's the field-surveyed coordinate),
 // ROOFTOP_INTERPOLATED (full-address geocode match), ZIP_CENTROID (last-resort
 // zip-only geocode match) — instead of the v13 binary ROOFTOP_INTERPOLATED/NULL.
-export const AFDC_SEED_VERSION = 14;
+// v15 (UOW-22.3): station card metadata enrichment. Real AFDC records carry
+// `ev_connector_types` (e.g. ["TESLA"], ["CHADEMO","J1772COMBO"]) and
+// `ev_charging_units` (per-unit connector/power_kw breakdown) — verified
+// present on live-ingested data, not assumed. `ev_connector_types` persists
+// as a JSON-encoded array; `ev_max_power_kw` is the highest power_kw found
+// across a station's charging units, letting the station card show a real
+// power summary instead of just a port count.
+export const AFDC_SEED_VERSION = 15;
 
 export function ensureAfdcSchema() {
   if (migrated) return migrated;
@@ -130,6 +137,8 @@ export function ensureAfdcSchema() {
       status_code        TEXT,                 -- AFDC: E=open, P=planned, T=temporarily unavailable
       ev_dc_fast_num     INTEGER,              -- DC fast port count
       ev_level2_num      INTEGER,              -- Level-2 port count
+      ev_connector_types TEXT,                 -- JSON array, e.g. '["TESLA"]' or '["CHADEMO","J1772COMBO"]'
+      ev_max_power_kw    REAL,                 -- highest power_kw found across ev_charging_units
       updated_at         TEXT,                 -- AFDC record freshness stamp
       synced_at          TEXT NOT NULL,
       precision_score    TEXT                  -- NULL | 'NATIVE_GPS' | 'ROOFTOP_INTERPOLATED' | 'ZIP_CENTROID'

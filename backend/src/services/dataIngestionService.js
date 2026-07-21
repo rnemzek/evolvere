@@ -343,6 +343,8 @@ export function getSpatialClusters({ minLat, maxLat, minLng, maxLng, zoom }) {
     const centerLng = (minLng + maxLng) / 2;
     const rows = database
       .prepare(`SELECT s.afdc_id, s.station_name, s.state, s.ev_network, s.status_code, s.precision_score,
+                       s.street_address, s.city, s.zip, s.access_days_time,
+                       s.ev_dc_fast_num, s.ev_level2_num, s.ev_connector_types, s.ev_max_power_kw,
                        COALESCE(c.corrected_lat, s.latitude) AS latitude,
                        COALESCE(c.corrected_lng, s.longitude) AS longitude
                 FROM afdc_stations s ${join} ${CORRECTIONS_JOIN} WHERE ${where}
@@ -356,6 +358,7 @@ export function getSpatialClusters({ minLat, maxLat, minLng, maxLng, zoom }) {
       truncated: total > STATION_MODE_CAP,
       stations: rows.map((r) => ({
         stationId: `AFDC-${r.afdc_id}`,
+        afdcId: r.afdc_id,
         name: r.station_name,
         state: r.state,
         network: r.ev_network,
@@ -370,6 +373,16 @@ export function getSpatialClusters({ minLat, maxLat, minLng, maxLng, zoom }) {
         // neon treatment; ZIP_CENTROID is deliberately excluded — it's a
         // coarse area-level fallback, not a real point worth highlighting.
         isHighPrecision: r.precision_score === 'NATIVE_GPS' || r.precision_score === 'ROOFTOP_INTERPOLATED',
+        // UOW-22.3 Task 22.3.2: station card metadata — real AFDC address and
+        // connector/power fields, straight off the registry row.
+        streetAddress: r.street_address,
+        city: r.city,
+        zip: r.zip,
+        accessDaysTime: r.access_days_time,
+        dcFastCount: r.ev_dc_fast_num,
+        level2Count: r.ev_level2_num,
+        connectorTypes: r.ev_connector_types ? JSON.parse(r.ev_connector_types) : null,
+        maxPowerKw: r.ev_max_power_kw,
       })),
     };
   }

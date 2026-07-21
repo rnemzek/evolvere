@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { AttributionControl, MapContainer, TileLayer, Marker, Tooltip, Circle, CircleMarker, Rectangle, ZoomControl, useMapEvents } from 'react-leaflet'
+import { AttributionControl, MapContainer, TileLayer, Marker, Tooltip, Popup, Circle, CircleMarker, Rectangle, ZoomControl, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 // Leaflet CSS ships with this lazy chunk, not the landing bundle (Task 7.1).
 import 'leaflet/dist/leaflet.css'
@@ -368,6 +368,65 @@ const stationStateLabel = (station) => {
   return ' · STATION DOWN'
 }
 
+/**
+ * UOW-22.3 Task 22.3.2: station detail card, rendered inside a Popup (not a
+ * Tooltip — see NationalFleetLayer) so it persists until the operator
+ * explicitly dismisses it. Every field comes straight off the AFDC registry
+ * row via /api/v1/fleet/spatial-cluster's station-mode payload.
+ */
+function StationCard({ station }) {
+  const address = [station.streetAddress, [station.city, station.state].filter(Boolean).join(', '), station.zip]
+    .filter(Boolean)
+    .join(' · ')
+  const ports = [
+    station.dcFastCount > 0 ? `${station.dcFastCount} DC Fast` : null,
+    station.level2Count > 0 ? `${station.level2Count} Level 2` : null,
+  ].filter(Boolean).join(' · ')
+  const connectorSummary = [
+    station.connectorTypes?.length ? station.connectorTypes.join(', ') : null,
+    station.maxPowerKw ? `up to ${station.maxPowerKw} kW` : null,
+  ].filter(Boolean).join(' · ')
+
+  return (
+    <div className="min-w-56 max-w-72 space-y-2">
+      <div>
+        <p className="text-[10px] uppercase tracking-widest text-zinc-400">Station</p>
+        <p className="text-sm font-semibold leading-tight text-slate-100">{station.name}</p>
+        <p className="font-mono text-xs text-cyan-400">
+          {station.stationId}
+          {stationStateLabel(station)}
+        </p>
+      </div>
+      {station.isHighPrecision && (
+        <p className="text-[10px] font-bold uppercase tracking-widest text-fuchsia-300">
+          ◆ High-Precision Geocoded
+        </p>
+      )}
+      <div className="space-y-1 border-t border-zinc-700/60 pt-2">
+        <p className="text-xs text-slate-200">
+          <span className="text-zinc-400">Network:</span> {station.network ?? 'Non-Networked'}
+        </p>
+        {address && (
+          <p className="text-xs text-slate-200">
+            <span className="text-zinc-400">Address:</span> {address}
+          </p>
+        )}
+        {(connectorSummary || ports) && (
+          <p className="text-xs text-slate-200">
+            <span className="text-zinc-400">Connectors:</span>{' '}
+            {connectorSummary || ports}
+          </p>
+        )}
+        {station.accessDaysTime && (
+          <p className="text-xs text-slate-200">
+            <span className="text-zinc-400">Access:</span> {station.accessDaysTime}
+          </p>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function clusterIcon(cluster) {
   const sagging = cluster.sagCount > 0
   // UOW-22.2 Task 22.2.1: dropped the has-ground-truth glow class. Real AFDC
@@ -508,13 +567,26 @@ function NationalFleetLayer({ onViewportTotal }) {
         radius={5}
         renderer={touchPinRenderer}
         eventHandlers={{
-          click: (e) => {
-            e.target.openTooltip()
-            setFocusedStationId(station.stationId)
-          },
-          mouseover: () => setFocusedStationId(station.stationId),
-          mouseout: () =>
+          // UOW-22.3 Task 22.3.1: a Popup (not Tooltip) opens on click and
+          // stays open on its own — Leaflet's own lifecycle handles the X
+          // button, tapping empty map (closeOnClick), and Escape
+          // (closeOnEscapeKey), all defaulted on. Because it opens on a real
+          // 'click' event rather than 'mouseover', it sidesteps the touch
+          // flicker Tooltip had: touch screens fire click reliably but don't
+          // fire a clean, sustained hover the way Tooltip's open state relied
+          // on. Selecting a different marker's popup auto-closes this one
+          // (Leaflet's autoClose default) — popupclose then fires here too.
+          popupopen: () => setFocusedStationId(station.stationId),
+          popupclose: () =>
             setFocusedStationId((current) => (current === station.stationId ? null : current)),
+          // Desktop-only convenience glow on hover; never steps on an open
+          // popup's halo (checked via isPopupOpen so the two triggers can't
+          // fight each other when a mouse hovers away from an opened card).
+          mouseover: () => setFocusedStationId(station.stationId),
+          mouseout: (e) => {
+            if (e.target.isPopupOpen()) return
+            setFocusedStationId((current) => (current === station.stationId ? null : current))
+          },
         }}
         bubblingMouseEvents={false}
         pathOptions={{
@@ -525,20 +597,9 @@ function NationalFleetLayer({ onViewportTotal }) {
           fillOpacity: station.isPlanned ? 0.2 : 0.5,
         }}
       >
-        <Tooltip direction="top" opacity={1} className="charger-tooltip">
-          <div className="space-y-1">
-            <p className="text-sm font-semibold text-slate-100">{station.name}</p>
-            {station.isHighPrecision && (
-              <p className="text-[10px] font-bold uppercase tracking-widest text-fuchsia-300">
-                ◆ High-Precision Geocoded
-              </p>
-            )}
-            <p className="font-mono text-xs text-zinc-300">
-              {station.stationId} · {station.state ?? '—'}
-              {stationStateLabel(station)}
-            </p>
-          </div>
-        </Tooltip>
+        <Popup closeButton={true} autoClose={true} closeOnClick={true} className="station-popup">
+          <StationCard station={station} />
+        </Popup>
       </CircleMarker>
     )),
     focusedStation ? (

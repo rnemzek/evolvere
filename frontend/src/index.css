@@ -72,6 +72,46 @@ body {
   }
 }
 
+/* --- Station detail card (UOW-22.3 Task 22.3.1) ---------------------------
+   A Leaflet Popup, not a Tooltip: Popup opens on click and stays open on its
+   own terms (X button / closeOnClick / autoClose), which is what makes the
+   card persistent on touch instead of vanishing the instant a synthesized
+   hover event clears. Popup ships its own DOM (.leaflet-popup-content-wrapper
+   + .leaflet-popup-tip), separate from .leaflet-tooltip, so it needs its own
+   dark-theme override rather than reusing .charger-tooltip. */
+.leaflet-popup.station-popup .leaflet-popup-content-wrapper {
+  background: rgb(24 24 27 / 0.97); /* zinc-900 */
+  backdrop-filter: blur(6px);
+  border: 1px solid rgb(6 182 212 / 0.5); /* cyan-500/50 */
+  border-radius: 0.75rem;
+  box-shadow:
+    0 0 18px rgba(34, 211, 238, 0.12),
+    0 10px 30px rgba(0, 0, 0, 0.55);
+  color: #f4f4f5; /* zinc-100 */
+}
+
+.leaflet-popup.station-popup .leaflet-popup-content {
+  margin: 0.65rem 0.8rem;
+}
+
+.leaflet-popup.station-popup .leaflet-popup-tip {
+  background: rgb(24 24 27 / 0.97);
+  box-shadow: none;
+}
+
+.leaflet-popup.station-popup .leaflet-popup-close-button {
+  color: #a1a1aa; /* zinc-400 */
+  font-size: 18px;
+  padding: 6px 8px 0 0;
+  /* UOW-16 Task 16.2 touch-tap hardening, applied here too — a 44px-ish
+     effective target for the explicit close affordance Task 22.3.1 requires. */
+  touch-action: manipulation;
+}
+
+.leaflet-popup.station-popup .leaflet-popup-close-button:hover {
+  color: #f4f4f5;
+}
+
 /* --- Charger marker states ------------------------------------------------ */
 
 /* UOW-16 Task 16.2: tap-friendly gates on every interactive icon element.
